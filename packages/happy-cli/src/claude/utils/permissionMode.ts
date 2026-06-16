@@ -10,6 +10,7 @@ export type ClaudeSdkPermissionMode = NonNullable<QueryOptions['permissionMode']
  *
  * Mapping:
  * - yolo → bypassPermissions (both skip all permissions)
+ * - full → bypassPermissions (Codex full is also a bypass equivalent)
  * - safe-yolo → default (ask for permissions)
  * - read-only → default (Claude doesn't support read-only)
  *
@@ -19,6 +20,7 @@ export type ClaudeSdkPermissionMode = NonNullable<QueryOptions['permissionMode']
 export function mapToClaudeMode(mode: PermissionMode): ClaudeSdkPermissionMode {
     const codexToClaudeMap: Record<string, ClaudeSdkPermissionMode> = {
         'yolo': 'bypassPermissions',
+        'full': 'bypassPermissions',
         'safe-yolo': 'default',
         'read-only': 'default',
     };
@@ -33,6 +35,7 @@ const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
     'read-only',
     'safe-yolo',
     'yolo',
+    'full',
 ] as const;
 
 function isPermissionMode(value: string | undefined): value is PermissionMode {
@@ -102,7 +105,7 @@ export function applySandboxPermissionPolicy(
 }
 
 function isClaudeBypassEquivalent(mode: PermissionMode | undefined): boolean {
-    return mode === 'bypassPermissions' || mode === 'yolo';
+    return mode === 'bypassPermissions' || mode === 'yolo' || mode === 'full';
 }
 
 /**

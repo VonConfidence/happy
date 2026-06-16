@@ -18,6 +18,7 @@ export function resolveCodexExecutionPolicy(
             case 'read-only': return 'never';                      // Never ask, read-only enforced by sandbox
             case 'safe-yolo': return 'on-failure';                 // Auto-run, ask only on failure
             case 'yolo': return 'never';                           // Full YOLO: never interrupt for approvals
+            case 'full': return 'never';                           // Auto-approve all Happy-side permission prompts
             // Defensive fallback for Claude-specific modes (backward compatibility)
             case 'bypassPermissions': return 'never';              // Full access: map to yolo behavior
             case 'acceptEdits': return 'on-request';               // Let model decide (closest to auto-approve edits)
@@ -33,6 +34,7 @@ export function resolveCodexExecutionPolicy(
             case 'read-only': return 'read-only';                  // Read-only filesystem
             case 'safe-yolo': return 'workspace-write';            // Can write in workspace
             case 'yolo': return 'danger-full-access';              // Full system access
+            case 'full': return 'danger-full-access';              // Full system access
             // Defensive fallback for Claude-specific modes
             case 'bypassPermissions': return 'danger-full-access'; // Full access: map to yolo
             case 'acceptEdits': return 'workspace-write';          // Can edit files in workspace

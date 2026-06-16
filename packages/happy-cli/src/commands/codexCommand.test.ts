@@ -97,6 +97,18 @@ describe('handleCodexCommand', () => {
     })
   })
 
+  it('passes full permission-mode through to runCodex', async () => {
+    await handleCodexCommand(['--permission-mode', 'full'])
+
+    expect(mocks.mockRunCodex).toHaveBeenCalledWith({
+      credentials: { token: 'token' },
+      startedBy: undefined,
+      noSandbox: false,
+      resumeThreadId: undefined,
+      permissionMode: 'full',
+    })
+  })
+
   it('maps --yolo to codex yolo permission mode', async () => {
     await handleCodexCommand(['--yolo'])
 

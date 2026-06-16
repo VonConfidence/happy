@@ -458,9 +458,11 @@ export const en: TranslationStructure = {
             readOnly: 'read-only',
             safeYolo: 'safe yolo',
             yolo: 'yolo',
+            full: 'full',
             badgeReadOnly: 'read-only',
             badgeSafeYolo: 'safe yolo',
             badgeYolo: 'yolo',
+            badgeFull: 'full',
         },
         codexModel: {
             title: 'CODEX MODEL',

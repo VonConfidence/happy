@@ -444,9 +444,11 @@ export const zhHant: TranslationStructure = {
             readOnly: '唯讀模式',
             safeYolo: '安全 YOLO',
             yolo: 'YOLO',
+            full: 'FULL',
             badgeReadOnly: '唯讀模式',
             badgeSafeYolo: '安全 YOLO',
             badgeYolo: 'YOLO',
+            badgeFull: 'FULL',
         },
         codexModel: {
             title: 'CODEX 模型',

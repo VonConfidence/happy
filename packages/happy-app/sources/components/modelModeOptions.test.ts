@@ -50,7 +50,7 @@ describe('modelModeOptions', () => {
         expect(getDefaultPermissionModeKey('claude')).toBe('bypassPermissions');
         expect(getDefaultModelKey('claude')).toBe('opus');
         expect(getDefaultEffortKey('claude')).toBe('medium');
-        expect(getDefaultPermissionModeKey('codex')).toBe('yolo');
+        expect(getDefaultPermissionModeKey('codex')).toBe('full');
         expect(getDefaultModelKey('codex')).toBe('gpt-5.5');
         expect(getDefaultEffortKey('codex')).toBe('medium');
     });
@@ -85,7 +85,7 @@ describe('modelModeOptions', () => {
             operatingModes: [{ code: 'metadata-only', value: 'Metadata Mode', description: null }],
         } as any, translate);
 
-        expect(modes.map((mode) => mode.key)).toEqual(['default', 'read-only', 'safe-yolo', 'yolo']);
+        expect(modes.map((mode) => mode.key)).toEqual(['default', 'read-only', 'safe-yolo', 'yolo', 'full']);
     });
 
     it('applies hacks to metadata-provided operating modes', () => {

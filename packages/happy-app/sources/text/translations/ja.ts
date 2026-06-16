@@ -445,9 +445,11 @@ export const ja: TranslationStructure = {
             readOnly: '読み取り専用モード',
             safeYolo: 'セーフYOLO',
             yolo: 'YOLO',
+            full: 'FULL',
             badgeReadOnly: '読み取り専用モード',
             badgeSafeYolo: 'セーフYOLO',
             badgeYolo: 'YOLO',
+            badgeFull: 'FULL',
         },
         codexModel: {
             title: 'CODEXモデル',

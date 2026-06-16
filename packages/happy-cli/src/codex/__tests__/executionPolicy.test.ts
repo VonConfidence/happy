@@ -47,6 +47,15 @@ describe('resolveCodexExecutionPolicy', () => {
         });
     });
 
+    it('maps full mode to never + danger-full-access without managed sandbox', () => {
+        const policy = resolveCodexExecutionPolicy('full', false);
+
+        expect(policy).toEqual({
+            approvalPolicy: 'never',
+            sandbox: 'danger-full-access',
+        });
+    });
+
     it('maps bypassPermissions mode to never + danger-full-access without managed sandbox', () => {
         const policy = resolveCodexExecutionPolicy('bypassPermissions', false);
 

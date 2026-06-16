@@ -1,16 +1,22 @@
 const { execFileSync } = require('node:child_process');
 
 const variant = process.env.APP_ENV || 'development';
+const isPersonalSigningBuild =
+    process.env.IOS_PERSONAL_SIGNING === '1' ||
+    process.env.IOS_PERSONAL_SIGNING === 'true';
 const name = {
     development: "Happy (dev)",
     preview: "Happy (preview)",
     production: "Happy"
 }[variant];
-const bundleId = {
+const defaultBundleId = {
     development: "com.slopus.happy.dev",
     preview: "com.slopus.happy.preview",
     production: "com.ex3ndr.happy"
 }[variant];
+const bundleId = isPersonalSigningBuild
+    ? getPersonalSigningBundleId(variant)
+    : defaultBundleId;
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
 const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
 const elevenLabsAgentId = {
@@ -55,6 +61,25 @@ function loadBuildMetadata() {
 
 const buildMetadata = loadBuildMetadata();
 
+function sanitizeBundleIdPart(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .replace(/-+/g, '-');
+}
+
+function getPersonalSigningBundleId(currentVariant) {
+    const override = process.env.IOS_BUNDLE_ID?.trim();
+    if (override) {
+        return override;
+    }
+
+    const userPart = sanitizeBundleIdPart(process.env.USER || 'local') || 'local';
+    const variantPart = currentVariant === 'production' ? 'app' : currentVariant;
+    return `com.personal.${userPart}.happy.${variantPart}`;
+}
+
 export default {
     expo: {
         name,
@@ -87,7 +112,10 @@ export default {
                     ? { NSAllowsLocalNetworking: true }
                     : { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
             },
-            associatedDomains: variant === 'production' ? ["applinks:app.happy.engineering"] : []
+            associatedDomains:
+                variant === 'production' && !isPersonalSigningBuild
+                    ? ["applinks:app.happy.engineering"]
+                    : []
         },
         android: {
             adaptiveIcon: {
@@ -178,11 +206,21 @@ export default {
                     recordAudioAndroid: true
                 }
             ],
+            ...(
+                isPersonalSigningBuild
+                    ? []
+                    : [[
+                        "expo-notifications",
+                        {
+                            "enableBackgroundRemoteNotifications": true,
+                            "icon": "./sources/assets/images/icon-notification.png"
+                        }
+                    ]]
+            ),
             [
-                "expo-notifications",
+                require("./plugins/withIosPersonalSigning"),
                 {
-                    "enableBackgroundRemoteNotifications": true,
-                    "icon": "./sources/assets/images/icon-notification.png"
+                    enabled: isPersonalSigningBuild
                 }
             ],
             [
@@ -228,6 +266,8 @@ export default {
                 revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE,
                 elevenLabsAgentId,
                 consoleLoggingDefault,
+                isPersonalSigningBuild,
+                effectiveIosBundleId: bundleId,
                 buildCommitSha: buildMetadata.commitSha,
                 buildCommitTimestamp: buildMetadata.commitTimestamp,
             }

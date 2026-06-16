@@ -460,9 +460,11 @@ export const pl: TranslationStructure = {
             readOnly: 'Read Only Mode',
             safeYolo: 'Safe YOLO',
             yolo: 'YOLO',
+            full: 'FULL',
             badgeReadOnly: 'Read Only Mode',
             badgeSafeYolo: 'Safe YOLO',
             badgeYolo: 'YOLO',
+            badgeFull: 'FULL',
         },
         codexModel: {
             title: 'CODEX MODEL',

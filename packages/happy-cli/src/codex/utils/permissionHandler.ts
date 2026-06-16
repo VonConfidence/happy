@@ -7,7 +7,7 @@
 
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
-import type { AgentState } from "@/api/types";
+import type { AgentState, PermissionMode } from "@/api/types";
 import {
     BasePermissionHandler,
     PermissionResult,
@@ -21,6 +21,8 @@ export type { PermissionResult, PendingRequest };
  * Codex-specific permission handler.
  */
 export class CodexPermissionHandler extends BasePermissionHandler {
+    private permissionMode: PermissionMode;
+
     // Exact tool names that should always be auto-approved. Include the bare
     // form (used by Codex elicitation messages like `tool "change_title"`)
     // and the MCP-qualified form for defense in depth.
@@ -37,12 +39,17 @@ export class CodexPermissionHandler extends BasePermissionHandler {
         'change_title',
     ];
 
-    constructor(session: ApiSessionClient) {
+    constructor(session: ApiSessionClient, permissionMode: PermissionMode = 'default') {
         super(session);
+        this.permissionMode = permissionMode;
     }
 
     protected getLogPrefix(): string {
         return '[Codex]';
+    }
+
+    setPermissionMode(permissionMode: PermissionMode): void {
+        this.permissionMode = permissionMode;
     }
 
     private shouldAutoApprove(toolName: string, toolCallId: string): boolean {
@@ -71,6 +78,27 @@ export class CodexPermissionHandler extends BasePermissionHandler {
         toolName: string,
         input: unknown
     ): Promise<PermissionResult> {
+        if (this.permissionMode === 'full') {
+            logger.debug(`${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in full mode`);
+
+            this.session.updateAgentState((currentState) => ({
+                ...currentState,
+                completedRequests: {
+                    ...currentState.completedRequests,
+                    [toolCallId]: {
+                        tool: toolName,
+                        arguments: input,
+                        createdAt: Date.now(),
+                        completedAt: Date.now(),
+                        status: 'approved',
+                        decision: 'approved',
+                    },
+                },
+            } satisfies AgentState));
+
+            return { decision: 'approved' };
+        }
+
         if (this.shouldAutoApprove(toolName, toolCallId)) {
             logger.debug(`${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId})`);
 

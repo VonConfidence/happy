@@ -8,6 +8,10 @@ describe('mapToClaudeMode', () => {
             expect(mapToClaudeMode('yolo')).toBe('bypassPermissions');
         });
 
+        it('maps full → bypassPermissions', () => {
+            expect(mapToClaudeMode('full')).toBe('bypassPermissions');
+        });
+
         it('maps safe-yolo → default', () => {
             expect(mapToClaudeMode('safe-yolo')).toBe('default');
         });
@@ -35,10 +39,10 @@ describe('mapToClaudeMode', () => {
         });
     });
 
-    describe('all 7 PermissionMode values are handled', () => {
+    describe('all 8 PermissionMode values are handled', () => {
         const allModes: PermissionMode[] = [
             'default', 'acceptEdits', 'bypassPermissions', 'plan',  // Claude modes
-            'read-only', 'safe-yolo', 'yolo'  // Codex modes
+            'read-only', 'safe-yolo', 'yolo', 'full'  // Codex modes
         ];
 
         it('returns a valid Claude mode for every PermissionMode', () => {
@@ -102,6 +106,10 @@ describe('resolveRemoteClaudePermissionMode', () => {
 
     it('preserves yolo when an app message sends the default mode', () => {
         expect(resolveRemoteClaudePermissionMode('yolo', 'default', false)).toBe('yolo');
+    });
+
+    it('preserves full when an app message sends the default mode', () => {
+        expect(resolveRemoteClaudePermissionMode('full', 'default', false)).toBe('full');
     });
 
     it('still allows explicit plan mode after bypassPermissions was active', () => {

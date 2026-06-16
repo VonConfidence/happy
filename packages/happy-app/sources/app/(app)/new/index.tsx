@@ -120,6 +120,7 @@ function getPermissionStyle(key: string): PermissionStyle | null {
             return { color: '#FBBF24', icon: 'play-forward' };
         case 'bypassPermissions':
         case 'yolo':
+        case 'full':
             return { color: '#F87171', icon: 'play-forward' };
         case 'read-only':
             return { color: '#60A5FA', icon: 'pause' };

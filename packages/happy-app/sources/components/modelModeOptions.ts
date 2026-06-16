@@ -62,6 +62,7 @@ export function getCodexPermissionModes(translate: Translate): PermissionMode[] 
         { key: 'read-only', name: translate('agentInput.codexPermissionMode.readOnly'), description: null },
         { key: 'safe-yolo', name: translate('agentInput.codexPermissionMode.safeYolo'), description: null },
         { key: 'yolo', name: translate('agentInput.codexPermissionMode.yolo'), description: null },
+        { key: 'full', name: translate('agentInput.codexPermissionMode.full'), description: null },
     ];
 }
 

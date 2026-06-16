@@ -442,9 +442,11 @@ export const it: TranslationStructure = {
             readOnly: 'Modalità sola lettura',
             safeYolo: 'YOLO sicuro',
             yolo: 'YOLO',
+            full: 'FULL',
             badgeReadOnly: 'Modalità sola lettura',
             badgeSafeYolo: 'YOLO sicuro',
             badgeYolo: 'YOLO',
+            badgeFull: 'FULL',
         },
         codexModel: {
             title: 'MODELLO CODEX',

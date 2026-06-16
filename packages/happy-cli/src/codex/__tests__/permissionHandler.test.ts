@@ -106,4 +106,23 @@ describe('CodexPermissionHandler', () => {
 
         expect(result).toEqual({ decision: 'approved' });
     });
+
+    it('auto-approves all tools in full mode', async () => {
+        const { session, getState } = createSessionMock();
+        const handler = new CodexPermissionHandler(session as any, 'full');
+
+        const result = await handler.handleToolCall(
+            'call_exec_456',
+            'Bash',
+            { command: 'rm -rf /tmp/example' },
+        );
+
+        expect(result).toEqual({ decision: 'approved' });
+        expect(getState().completedRequests.call_exec_456).toMatchObject({
+            tool: 'Bash',
+            arguments: { command: 'rm -rf /tmp/example' },
+            status: 'approved',
+            decision: 'approved',
+        });
+    });
 });

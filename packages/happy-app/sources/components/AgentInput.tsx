@@ -439,7 +439,7 @@ const AgentInputStatusRow = React.memo(function AgentInputStatusRow(p: StatusRow
                             p.permissionModeKey === 'plan' ? theme.colors.permission.plan :
                                 p.permissionModeKey === 'read-only' ? theme.colors.permission.readOnly :
                                     p.permissionModeKey === 'safe-yolo' ? theme.colors.permission.safeYolo :
-                                        p.permissionModeKey === 'yolo' ? theme.colors.permission.yolo :
+                                        p.permissionModeKey === 'yolo' || p.permissionModeKey === 'full' ? theme.colors.permission.yolo :
                                             theme.colors.textSecondary;
                 const permIcon: 'play-forward' | 'pause' =
                     p.permissionModeKey === 'plan' || p.permissionModeKey === 'read-only'
@@ -583,14 +583,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return true;
     }, [props.metadata?.sandbox]);
     const isSandboxedYoloMode = isSandboxEnabled && (
-        permissionModeKey === 'bypassPermissions' || permissionModeKey === 'yolo'
+        permissionModeKey === 'bypassPermissions' || permissionModeKey === 'yolo' || permissionModeKey === 'full'
     );
 
     const withSandboxSuffix = React.useCallback((label: string, modeKey?: string) => {
         if (!isSandboxEnabled) {
             return label;
         }
-        if (modeKey === 'bypassPermissions' || modeKey === 'yolo') {
+        if (modeKey === 'bypassPermissions' || modeKey === 'yolo' || modeKey === 'full') {
             return `${label} (sandboxed)`;
         }
         return label;

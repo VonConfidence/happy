@@ -61,7 +61,7 @@ function describeCodexFailure(msg: any): string | null {
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const DEFAULT_CODEX_EFFORT: ReasoningEffort = 'medium';
-const DEFAULT_CODEX_PERMISSION_MODE: PermissionMode = 'yolo';
+const DEFAULT_CODEX_PERMISSION_MODE: PermissionMode = 'full';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -135,7 +135,10 @@ export async function runCodex(opts: {
         machineId,
         startedBy: opts.startedBy,
         sandbox: sandboxConfig,
-        dangerouslySkipPermissions: initialPermissionMode === 'yolo' || initialPermissionMode === 'bypassPermissions',
+        dangerouslySkipPermissions:
+            initialPermissionMode === 'yolo'
+            || initialPermissionMode === 'full'
+            || initialPermissionMode === 'bypassPermissions',
         ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),
         ...(forkedFromMessageId ? { forkedFromMessageId } : {}),
     });
@@ -232,6 +235,7 @@ export async function runCodex(opts: {
 
     const resetCurrentModeDefaults = () => {
         currentPermissionMode = DEFAULT_CODEX_PERMISSION_MODE;
+        permissionHandler?.setPermissionMode(DEFAULT_CODEX_PERMISSION_MODE);
         currentModel = DEFAULT_CODEX_MODEL;
         currentEffort = DEFAULT_CODEX_EFFORT;
         currentAppendSystemPrompt = undefined;
@@ -252,6 +256,7 @@ export async function runCodex(opts: {
         'read-only',
         'safe-yolo',
         'yolo',
+        'full',
     ];
 
     const VALID_REMOTE_EFFORTS: readonly ReasoningEffort[] = [
@@ -266,6 +271,7 @@ export async function runCodex(opts: {
             if (VALID_REMOTE_PERMISSION_MODES.includes(incoming)) {
                 messagePermissionMode = incoming;
                 currentPermissionMode = messagePermissionMode;
+                permissionHandler?.setPermissionMode(messagePermissionMode);
                 logger.debug(`[Codex] Permission mode updated from user message to: ${currentPermissionMode}`);
             } else {
                 logger.debug(`[Codex] Ignoring invalid permission mode from user message: ${String(message.meta.permissionMode)}`);
@@ -532,7 +538,7 @@ export async function runCodex(opts: {
 
     client = new CodexAppServerClient(sandboxConfig);
 
-    permissionHandler = new CodexPermissionHandler(session);
+    permissionHandler = new CodexPermissionHandler(session, initialPermissionMode);
     // Drop any permission requests left in agent state from a previous CLI
     // process that died while a tool prompt was open — see the matching
     // call in claudeRemoteLauncher for the full rationale.
