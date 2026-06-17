@@ -336,6 +336,9 @@ export async function startDaemon(): Promise<void> {
         if (options.resumeCodexThreadId) {
           extraEnv.HAPPY_FORK_CODEX_THREAD_ID = options.resumeCodexThreadId;
         }
+        if (options.importedFromExternalCodex) {
+          extraEnv.HAPPY_IMPORTED_FROM_EXTERNAL_CODEX = '1';
+        }
         logger.debug(`[DAEMON RUN] Environment variable keys (before expansion) (${Object.keys(extraEnv).length}): ${Object.keys(extraEnv).join(', ')}`);
 
         // Expand ${VAR} references from daemon's process.env

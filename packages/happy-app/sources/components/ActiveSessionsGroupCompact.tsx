@@ -5,7 +5,7 @@ import { Text } from '@/components/StyledText';
 import { Machine, Session } from '@/sync/storageTypes';
 import { SessionRowData } from '@/sync/storage';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { type SessionState, formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
+import { type SessionState, formatPathRelativeToHome, formatLastSeen, prefixCodexSessionTitle } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from './StatusDot';
@@ -272,6 +272,7 @@ const ProjectGroupCard = React.memo(({
                 approvedNewDirectoryCreation,
                 agent: 'codex',
                 resumeCodexThreadId: externalSession.codexThreadId,
+                importedFromExternalCodex: true,
             });
 
             switch (result.type) {
@@ -329,35 +330,38 @@ const ProjectGroupCard = React.memo(({
                 {showExternalCodexSection && (
                     <View style={styles.externalCodexSection}>
                         {externalCodexSection.visibleSessions.length > 0 ? (
-                            externalCodexSection.visibleSessions.map((session, index) => (
-                                <Pressable
-                                    key={session.codexThreadId}
-                                    accessibilityLabel={`Import external Codex session ${session.title}`}
-                                    onPress={() => void importExternalCodexSession(session)}
-                                    style={[
-                                        styles.externalCodexRow,
-                                        index < externalCodexSection.visibleSessions.length - 1 && styles.externalCodexRowWithBorder,
-                                    ]}
-                                >
-                                    <View style={[styles.externalCodexBadge, { backgroundColor: theme.colors.button.primary.disabled }]}>
-                                        <Text style={styles.externalCodexBadgeText}>Codex</Text>
-                                    </View>
-                                    <View style={styles.externalCodexContent}>
-                                        <Text style={styles.externalCodexTitle} numberOfLines={1}>
-                                            {session.title}
-                                        </Text>
-                                        <Text style={styles.externalCodexSubtitle} numberOfLines={1}>
-                                            {formatLastSeen(session.updatedAt, false)}
-                                            {session.previewText ? ` · ${session.previewText}` : ` · ${session.codexThreadId}`}
-                                        </Text>
-                                    </View>
-                                    {importingCodexThreadId === session.codexThreadId ? (
-                                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                                    ) : (
-                                        <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />
-                                    )}
-                                </Pressable>
-                            ))
+                            externalCodexSection.visibleSessions.map((session, index) => {
+                                const codexTitle = prefixCodexSessionTitle(session.title);
+                                return (
+                                    <Pressable
+                                        key={session.codexThreadId}
+                                        accessibilityLabel={`Import external Codex session ${codexTitle}`}
+                                        onPress={() => void importExternalCodexSession(session)}
+                                        style={[
+                                            styles.externalCodexRow,
+                                            index < externalCodexSection.visibleSessions.length - 1 && styles.externalCodexRowWithBorder,
+                                        ]}
+                                    >
+                                        <View style={[styles.externalCodexBadge, { backgroundColor: theme.colors.button.primary.disabled }]}>
+                                            <Text style={styles.externalCodexBadgeText}>Codex</Text>
+                                        </View>
+                                        <View style={styles.externalCodexContent}>
+                                            <Text style={styles.externalCodexTitle} numberOfLines={1}>
+                                                {codexTitle}
+                                            </Text>
+                                            <Text style={styles.externalCodexSubtitle} numberOfLines={1}>
+                                                {formatLastSeen(session.updatedAt, false)}
+                                                {session.previewText ? ` · ${session.previewText}` : ` · ${session.codexThreadId}`}
+                                            </Text>
+                                        </View>
+                                        {importingCodexThreadId === session.codexThreadId ? (
+                                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                        ) : (
+                                            <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />
+                                        )}
+                                    </Pressable>
+                                );
+                            })
                         ) : (
                             <View style={styles.externalCodexEmptyState}>
                                 <Text style={styles.externalCodexEmptyText}>

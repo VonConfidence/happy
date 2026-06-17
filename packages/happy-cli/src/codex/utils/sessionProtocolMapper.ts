@@ -169,15 +169,75 @@ function textFromInputItems(items: unknown): string | null {
     return text.length > 0 ? text : null;
 }
 
+function flattenThreadTextParts(value: unknown): string[] {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? [trimmed] : [];
+    }
+
+    if (Array.isArray(value)) {
+        return value.flatMap((item) => flattenThreadTextParts(item));
+    }
+
+    if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        return [
+            ...flattenThreadTextParts(record.text),
+            ...flattenThreadTextParts(record.content),
+            ...flattenThreadTextParts(record.message),
+        ];
+    }
+
+    return [];
+}
+
 function reasoningText(item: ThreadItem): string | null {
     const summary = (item as { summary?: unknown }).summary;
     const content = (item as { content?: unknown }).content;
     const parts = [
-        ...(Array.isArray(summary) ? summary : []),
-        ...(Array.isArray(content) ? content : []),
-    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+        ...flattenThreadTextParts(summary),
+        ...flattenThreadTextParts(content),
+    ];
     const text = parts.join('\n').trim();
     return text.length > 0 ? text : null;
+}
+
+function firstNonEmptyLine(text: string): string | null {
+    for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+            return trimmed;
+        }
+    }
+    return null;
+}
+
+export function getCodexThreadSummaryText(thread: Pick<Thread, 'id' | 'name' | 'preview' | 'turns'>): string | null {
+    const threadName = typeof thread.name === 'string' ? firstNonEmptyLine(thread.name) : null;
+    if (threadName) {
+        return threadName;
+    }
+
+    const preview = typeof thread.preview === 'string' ? firstNonEmptyLine(thread.preview) : null;
+    if (preview) {
+        return preview;
+    }
+
+    for (const turn of thread.turns ?? []) {
+        for (const item of turn.items ?? []) {
+            if (item.type !== 'userMessage') {
+                continue;
+            }
+
+            const text = textFromInputItems(item.content);
+            const line = text ? firstNonEmptyLine(text) : null;
+            if (line) {
+                return line;
+            }
+        }
+    }
+
+    return null;
 }
 
 function turnStatus(turn: ThreadTurn): TurnEndStatus {
@@ -233,6 +293,84 @@ function emitHistoricalToolCall(
         id: `${item.id}:end`,
         time: completedTimestampMs(turn),
     }));
+}
+
+function webSearchTitle(item: ThreadItem): string {
+    const rawQuery = (item as { query?: unknown }).query;
+    const query = typeof rawQuery === 'string'
+        ? rawQuery.trim()
+        : '';
+
+    if (query.length === 0) {
+        return 'Web search';
+    }
+
+    const short = query.length > 80 ? `${query.slice(0, 77)}...` : query;
+    return `Search web for \`${short}\``;
+}
+
+function normalizeHistoricalFileChanges(changes: unknown): Record<string, Record<string, unknown>> | null {
+    if (!Array.isArray(changes)) {
+        return changes && typeof changes === 'object' ? changes as Record<string, Record<string, unknown>> : null;
+    }
+
+    const normalized: Record<string, Record<string, unknown>> = {};
+    for (const change of changes) {
+        if (!change || typeof change !== 'object' || Array.isArray(change)) {
+            continue;
+        }
+
+        const record = change as Record<string, unknown>;
+        const path = typeof record.path === 'string' ? record.path : null;
+        if (!path) {
+            continue;
+        }
+
+        const kind = record.kind && typeof record.kind === 'object' && !Array.isArray(record.kind)
+            ? record.kind as Record<string, unknown>
+            : null;
+        const type = typeof record.type === 'string'
+            ? record.type
+            : (typeof kind?.type === 'string' ? kind.type : null);
+        const movePath = record.move_path ?? kind?.move_path ?? null;
+        const entry: Record<string, unknown> = {};
+
+        if (kind) {
+            entry.kind = kind;
+        } else if (type) {
+            entry.kind = { type, move_path: movePath };
+        }
+
+        const diff = typeof record.diff === 'string'
+            ? record.diff
+            : (typeof record.unified_diff === 'string' ? record.unified_diff : null);
+        if (diff !== null) {
+            entry.diff = diff;
+            entry.unified_diff = diff;
+        }
+
+        if (record.add && typeof record.add === 'object' && !Array.isArray(record.add)) {
+            entry.add = record.add;
+        }
+        if (record.modify && typeof record.modify === 'object' && !Array.isArray(record.modify)) {
+            entry.modify = record.modify;
+        }
+        if (record.delete && typeof record.delete === 'object' && !Array.isArray(record.delete)) {
+            entry.delete = record.delete;
+        }
+
+        const content = typeof record.content === 'string' ? record.content : null;
+        if (type === 'add' && content !== null) {
+            entry.add = { content };
+        }
+        if (type === 'delete' && content !== null) {
+            entry.delete = { content };
+        }
+
+        normalized[path] = entry;
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>): SessionEnvelope[] {
@@ -299,13 +437,16 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                 }
                 case 'fileChange': {
                     const title = 'Apply patch';
+                    const normalizedChanges = normalizeHistoricalFileChanges(item.changes);
                     emitHistoricalToolCall(
                         envelopes,
                         turn,
                         item,
                         'CodexPatch',
                         title,
-                        { changes: item.changes, status: item.status },
+                        normalizedChanges
+                            ? { changes: normalizedChanges, fileChanges: normalizedChanges, status: item.status }
+                            : { changes: item.changes, status: item.status },
                         null,
                     );
                     break;
@@ -327,6 +468,21 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                             arguments: item.arguments,
                         },
                         output,
+                    );
+                    break;
+                }
+                case 'webSearch': {
+                    emitHistoricalToolCall(
+                        envelopes,
+                        turn,
+                        item,
+                        'WebSearch',
+                        webSearchTitle(item),
+                        {
+                            query: (item as { query?: unknown }).query,
+                            action: (item as { action?: unknown }).action,
+                        },
+                        null,
                     );
                     break;
                 }

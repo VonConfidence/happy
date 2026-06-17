@@ -39,6 +39,8 @@ export interface CreateSessionMetadataOptions {
     parentSessionId?: string;
     /** Happy message id used as the fork rewind point. */
     forkedFromMessageId?: string;
+    /** Whether this session came from the external Codex refresh/import flow. */
+    importedFromExternalCodex?: boolean;
 }
 
 /**
@@ -94,6 +96,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         flavor: opts.flavor,
         sandbox: opts.sandbox?.enabled ? opts.sandbox : null,
         dangerouslySkipPermissions: opts.dangerouslySkipPermissions ?? null,
+        ...(opts.importedFromExternalCodex ? { importedFromExternalCodex: true } : {}),
         ...(opts.parentSessionId ? { parentSessionId: opts.parentSessionId } : {}),
         ...(opts.forkedFromMessageId ? { forkedFromMessageId: opts.forkedFromMessageId } : {}),
     };

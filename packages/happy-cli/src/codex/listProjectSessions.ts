@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 export interface CodexProjectSessionSummary {
@@ -12,6 +12,12 @@ export interface CodexProjectSessionSummary {
 type SessionIndexEntry = {
     threadName: string;
     updatedAt: number;
+};
+
+type SessionMetaPayload = {
+    id?: string;
+    cwd?: string;
+    source?: unknown;
 };
 
 export async function listProjectSessions(opts: {
@@ -68,7 +74,6 @@ async function readIndex(indexPath: string): Promise<Map<string, SessionIndexEnt
 async function collectCandidateFiles(codexHome: string): Promise<string[]> {
     const files: string[] = [];
     await collectJsonlFiles(join(codexHome, 'sessions'), true, files);
-    await collectJsonlFiles(join(codexHome, 'archived_sessions'), false, files);
     return files;
 }
 
@@ -99,14 +104,18 @@ async function readSummaryFromFile(
     importedThreadIds: Set<string>,
 ): Promise<CodexProjectSessionSummary | null> {
     let raw: string;
+    let fileUpdatedAt = 0;
     try {
         raw = await readFile(file, 'utf8');
+        const stats = await stat(file);
+        fileUpdatedAt = Number.isFinite(stats.mtimeMs) ? stats.mtimeMs : 0;
     } catch {
         return null;
     }
 
     let threadId: string | null = null;
     let cwd: string | null = null;
+    let sessionSource: unknown;
     let previewText: string | undefined;
 
     for (const line of raw.split('\n')) {
@@ -120,16 +129,17 @@ async function readSummaryFromFile(
         }
 
         if (row?.type === 'session_meta') {
-            threadId = typeof row.payload?.id === 'string' ? row.payload.id : threadId;
-            cwd = typeof row.payload?.cwd === 'string' ? resolve(row.payload.cwd) : cwd;
+            const payload = row.payload as SessionMetaPayload | undefined;
+            threadId = typeof payload?.id === 'string' ? payload.id : threadId;
+            cwd = typeof payload?.cwd === 'string' ? resolve(payload.cwd) : cwd;
+            sessionSource = payload?.source;
             continue;
         }
 
         if (!previewText && row?.type === 'response_item' && row.payload?.type === 'message' && row.payload?.role === 'user') {
-            const content = Array.isArray(row.payload?.content) ? row.payload.content : [];
-            const inputTextBlock = content.find((item: any) => item?.type === 'input_text' && typeof item?.text === 'string');
-            if (typeof inputTextBlock?.text === 'string' && inputTextBlock.text.trim().length > 0) {
-                previewText = inputTextBlock.text.trim();
+            const extractedPreview = extractMeaningfulUserPreview(row.payload?.content);
+            if (extractedPreview) {
+                previewText = extractedPreview;
             }
         }
     }
@@ -138,11 +148,82 @@ async function readSummaryFromFile(
         return null;
     }
 
+    if (isSubagentThread(sessionSource)) {
+        return null;
+    }
+
     const indexed = indexById.get(threadId);
+    if (!indexed) {
+        return null;
+    }
+
     return {
         codexThreadId: threadId,
-        title: indexed?.threadName || previewText || threadId,
-        updatedAt: indexed?.updatedAt || 0,
+        title: indexed.threadName || previewText || threadId,
+        updatedAt: indexed.updatedAt || fileUpdatedAt,
         ...(previewText ? { previewText } : {}),
     };
+}
+
+function isSubagentThread(source: unknown): boolean {
+    return Boolean(
+        source
+        && typeof source === 'object'
+        && !Array.isArray(source)
+        && (source as { subagent?: unknown }).subagent,
+    );
+}
+
+function extractMeaningfulUserPreview(content: unknown): string | undefined {
+    if (!Array.isArray(content)) {
+        return undefined;
+    }
+
+    for (const item of content) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            continue;
+        }
+        if ((item as { type?: unknown }).type !== 'input_text') {
+            continue;
+        }
+
+        const text = typeof (item as { text?: unknown }).text === 'string'
+            ? (item as { text: string }).text
+            : '';
+        const cleaned = normalizeUserPreviewText(text);
+        if (cleaned) {
+            return cleaned;
+        }
+    }
+
+    return undefined;
+}
+
+function normalizeUserPreviewText(text: string): string | undefined {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return undefined;
+    }
+
+    if (trimmed.startsWith('# AGENTS.md instructions')) {
+        return undefined;
+    }
+    if (trimmed.startsWith('<environment_context>')) {
+        return undefined;
+    }
+
+    const withoutTitleInstruction = trimmed.replace(
+        /\n*\s*Based on this message, call functions\.happy__change_title[\s\S]*$/u,
+        '',
+    ).trim();
+    if (!withoutTitleInstruction) {
+        return undefined;
+    }
+
+    const firstNonEmptyLine = withoutTitleInstruction
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+
+    return firstNonEmptyLine || undefined;
 }

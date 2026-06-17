@@ -83,4 +83,14 @@ describe('createSessionMetadata', () => {
         expect(metadata.parentSessionId).toBe('happy-source');
         expect(metadata.forkedFromMessageId).toBe('message-2');
     });
+
+    it('sets external codex import metadata when provided', () => {
+        const { metadata } = createSessionMetadata({
+            flavor: 'codex',
+            machineId: 'machine-7',
+            importedFromExternalCodex: true,
+        });
+
+        expect(metadata.importedFromExternalCodex).toBe(true);
+    });
 });

@@ -31,6 +31,7 @@ import type { PermissionMode } from '@/api/types';
 import type { ApiSessionClient } from '@/api/apiSession';
 import { resolveCodexExecutionPolicy } from './executionPolicy';
 import {
+    getCodexThreadSummaryText,
     mapCodexMcpMessageToSessionEnvelopes,
     mapCodexProcessorMessageToSessionEnvelopes,
     mapCodexThreadToSessionEnvelopes,
@@ -129,6 +130,7 @@ export async function runCodex(opts: {
     // Lineage from the daemon's spawn RPC (set by app-side fork / duplicate).
     const forkedFromSessionId = process.env.HAPPY_FORKED_FROM_SESSION_ID;
     const forkedFromMessageId = process.env.HAPPY_FORKED_FROM_MESSAGE_ID;
+    const importedFromExternalCodex = process.env.HAPPY_IMPORTED_FROM_EXTERNAL_CODEX === '1';
 
     const { state, metadata } = createSessionMetadata({
         flavor: 'codex',
@@ -139,6 +141,7 @@ export async function runCodex(opts: {
             initialPermissionMode === 'yolo'
             || initialPermissionMode === 'full'
             || initialPermissionMode === 'bypassPermissions',
+        importedFromExternalCodex,
         ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),
         ...(forkedFromMessageId ? { forkedFromMessageId } : {}),
     });
@@ -735,12 +738,20 @@ export async function runCodex(opts: {
                     includeTurns: true,
                 });
                 const envelopes = mapCodexThreadToSessionEnvelopes(thread);
+                const threadSummaryText = getCodexThreadSummaryText(thread);
                 for (const envelope of envelopes) {
                     session.sendSessionProtocolMessage(envelope);
                 }
                 session.updateMetadata((currentMetadata) => ({
                     ...currentMetadata,
                     codexThreadId: forkCodexThreadId,
+                    ...(threadSummaryText ? {
+                        name: threadSummaryText,
+                        summary: {
+                            text: threadSummaryText,
+                            updatedAt: Date.now(),
+                        },
+                    } : {}),
                 }));
                 logger.debug(`[CODEX FORK BACKFILL] Replayed ${envelopes.length} historical envelopes from thread ${forkCodexThreadId}`);
             } catch (error) {

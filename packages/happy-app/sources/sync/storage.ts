@@ -17,6 +17,7 @@ import { Message } from "./typesMessage";
 import { NormalizedMessage } from "./typesRaw";
 import { isMachineOnline } from '@/utils/machineUtils';
 import { getSessionName, getSessionSubtitle, getSessionAvatarId, type SessionState } from '@/utils/sessionUtils';
+import { isSessionArchived } from '@/utils/sessionLifecycle';
 import { applySettings, Settings } from "./settings";
 import { LocalSettings, applyLocalSettings } from "./localSettings";
 import { Purchases, customerInfoToPurchases } from "./purchases";
@@ -240,6 +241,9 @@ function buildSessionListViewData(
     const inactiveSessions: Session[] = [];
 
     Object.values(sessions).forEach(session => {
+        if (isSessionArchived(session)) {
+            return;
+        }
         if (isSessionActive(session)) {
             activeSessions.push(session);
         } else {
@@ -387,7 +391,7 @@ export const storage = create<StorageState>()((set, get) => {
         },
         getActiveSessions: () => {
             const state = get();
-            return Object.values(state.sessions).filter(s => s.active);
+            return Object.values(state.sessions).filter(s => s.active && !isSessionArchived(s));
         },
         applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => set((state) => {
             // Load drafts and permission modes if sessions are empty (initial load)
@@ -441,6 +445,9 @@ export const storage = create<StorageState>()((set, get) => {
             // Build active set from all sessions (including existing ones)
             const activeSet = new Set<string>();
             Object.values(mergedSessions).forEach(session => {
+                if (isSessionArchived(session)) {
+                    return;
+                }
                 if (isSessionActive(session)) {
                     activeSet.add(session.id);
                 }
@@ -452,6 +459,9 @@ export const storage = create<StorageState>()((set, get) => {
 
             // Process all sessions from merged set
             Object.values(mergedSessions).forEach(session => {
+                if (isSessionArchived(session)) {
+                    return;
+                }
                 if (activeSet.has(session.id)) {
                     activeSessions.push(session);
                 } else {

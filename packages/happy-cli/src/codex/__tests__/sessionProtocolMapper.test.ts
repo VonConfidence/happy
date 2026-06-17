@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createId, isCuid } from '@paralleldrive/cuid2';
 import {
+    getCodexThreadSummaryText,
     mapCodexMcpMessageToSessionEnvelopes,
     mapCodexProcessorMessageToSessionEnvelopes,
     mapCodexThreadToSessionEnvelopes,
@@ -165,6 +166,22 @@ describe('mapCodexProcessorMessageToSessionEnvelopes', () => {
 });
 
 describe('mapCodexThreadToSessionEnvelopes', () => {
+    it('derives the imported session title from thread name and falls back to preview text', () => {
+        expect(getCodexThreadSummaryText({
+            id: 'thread-1',
+            name: 'Keep my title',
+            preview: 'preview text',
+            turns: [],
+        })).toBe('Keep my title');
+
+        expect(getCodexThreadSummaryText({
+            id: 'thread-2',
+            name: '   ',
+            preview: '\n  First preview line  \nSecond line',
+            turns: [],
+        })).toBe('First preview line');
+    });
+
     it('backfills Codex thread turns as session envelopes with codex item ids', () => {
         const envelopes = mapCodexThreadToSessionEnvelopes({
             turns: [{
@@ -238,6 +255,139 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
             role: 'agent',
             turn: 'turn-1',
             ev: { t: 'tool-call-end', call: 'cmd-1' },
+        });
+    });
+
+    it('normalizes historical file changes so codex patch stats can render', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                items: [
+                    {
+                        id: 'patch-1',
+                        type: 'fileChange',
+                        status: 'completed',
+                        changes: [
+                            {
+                                path: 'src/a.ts',
+                                kind: { type: 'update', move_path: null },
+                                diff: '@@ -1 +1 @@\n-old\n+new\n',
+                            },
+                            {
+                                path: 'src/b.ts',
+                                type: 'add',
+                                content: 'export const b = 1;\n',
+                            },
+                        ],
+                    },
+                ],
+            }],
+        });
+
+        expect(envelopes.map((envelope) => envelope.ev.t)).toEqual([
+            'turn-start',
+            'tool-call-start',
+            'tool-call-end',
+            'turn-end',
+        ]);
+        expect(envelopes[1]).toMatchObject({
+            role: 'agent',
+            turn: 'turn-1',
+            ev: {
+                t: 'tool-call-start',
+                call: 'patch-1',
+                name: 'CodexPatch',
+                args: {
+                    changes: {
+                        'src/a.ts': {
+                            diff: '@@ -1 +1 @@\n-old\n+new\n',
+                            unified_diff: '@@ -1 +1 @@\n-old\n+new\n',
+                            kind: { type: 'update', move_path: null },
+                        },
+                        'src/b.ts': {
+                            add: { content: 'export const b = 1;\n' },
+                            kind: { type: 'add', move_path: null },
+                        },
+                    },
+                    fileChanges: {
+                        'src/a.ts': {
+                            diff: '@@ -1 +1 @@\n-old\n+new\n',
+                            unified_diff: '@@ -1 +1 @@\n-old\n+new\n',
+                            kind: { type: 'update', move_path: null },
+                        },
+                        'src/b.ts': {
+                            add: { content: 'export const b = 1;\n' },
+                            kind: { type: 'add', move_path: null },
+                        },
+                    },
+                    status: 'completed',
+                },
+            },
+        });
+    });
+
+    it('backfills web search items as tool calls instead of dropping them', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                items: [
+                    {
+                        id: 'search-1',
+                        type: 'webSearch',
+                        query: 'vitest mock png',
+                        action: { type: 'search', query: 'vitest mock png' },
+                    },
+                ],
+            }],
+        });
+
+        expect(envelopes.map((envelope) => envelope.ev.t)).toEqual([
+            'turn-start',
+            'tool-call-start',
+            'tool-call-end',
+            'turn-end',
+        ]);
+        expect(envelopes[1]).toMatchObject({
+            role: 'agent',
+            turn: 'turn-1',
+            ev: {
+                t: 'tool-call-start',
+                call: 'search-1',
+                name: 'WebSearch',
+                args: {
+                    query: 'vitest mock png',
+                    action: { type: 'search', query: 'vitest mock png' },
+                },
+            },
+        });
+    });
+
+    it('keeps reasoning text when summary and content include structured blocks', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                items: [
+                    {
+                        id: 'reason-1',
+                        type: 'reasoning',
+                        summary: [{ text: 'Summarize findings' }],
+                        content: ['Inspect code', { text: 'Check thread mapper' }],
+                    },
+                ],
+            }],
+        });
+
+        expect(envelopes[1]).toMatchObject({
+            role: 'agent',
+            turn: 'turn-1',
+            ev: {
+                t: 'text',
+                text: 'Summarize findings\nInspect code\nCheck thread mapper',
+                thinking: true,
+            },
         });
     });
 });

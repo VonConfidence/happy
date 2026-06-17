@@ -14,7 +14,7 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-import { useSessionStatus } from './sessionUtils';
+import { getSessionName, prefixCodexSessionTitle, useSessionStatus } from './sessionUtils';
 
 describe('useSessionStatus', () => {
     it('shows auto-approving text for codex full mode permission requests', () => {
@@ -54,8 +54,13 @@ describe('useSessionStatus', () => {
             create(React.createElement(Probe));
         });
 
-        expect(captured?.statusText).toBe('status.autoApprovingPermission');
-        expect(captured?.state).toBe('permission_required');
+        const status = captured as ReturnType<typeof useSessionStatus> | null;
+        expect(status).not.toBeNull();
+        if (!status) {
+            throw new Error('Expected session status to be captured');
+        }
+        expect(status.statusText).toBe('status.autoApprovingPermission');
+        expect(status.state).toBe('permission_required');
     });
 
     it('keeps the standard permission text outside codex full mode', () => {
@@ -95,6 +100,38 @@ describe('useSessionStatus', () => {
             create(React.createElement(Probe));
         });
 
-        expect(captured?.statusText).toBe('status.permissionRequired');
+        const status = captured as ReturnType<typeof useSessionStatus> | null;
+        expect(status).not.toBeNull();
+        if (!status) {
+            throw new Error('Expected session status to be captured');
+        }
+        expect(status.statusText).toBe('status.permissionRequired');
+    });
+
+    it('prefixes imported codex session titles and falls back to metadata.name', () => {
+        expect(getSessionName({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                codexThreadId: 'thread-1',
+                importedFromExternalCodex: true,
+                name: 'Imported thread title',
+            },
+        } as any)).toBe('[codex]: Imported thread title');
+    });
+
+    it('does not prefix regular codex sessions that were not imported from external refresh', () => {
+        expect(getSessionName({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                codexThreadId: 'thread-1',
+                name: 'Regular codex session',
+            },
+        } as any)).toBe('Regular codex session');
+    });
+
+    it('does not double-prefix codex titles', () => {
+        expect(prefixCodexSessionTitle('[codex]: Imported thread title')).toBe('[codex]: Imported thread title');
     });
 });

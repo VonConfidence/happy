@@ -85,6 +85,7 @@ describe('ApiMachineClient Codex fork RPCs', () => {
             directory: '/tmp/project',
             agent: 'codex',
             resumeCodexThreadId: 'thread-forked',
+            importedFromExternalCodex: true,
             parentSessionId: 'happy-source',
         });
 
@@ -93,6 +94,7 @@ describe('ApiMachineClient Codex fork RPCs', () => {
             directory: '/tmp/project',
             agent: 'codex',
             resumeCodexThreadId: 'thread-forked',
+            importedFromExternalCodex: true,
             parentSessionId: 'happy-source',
         }));
     });

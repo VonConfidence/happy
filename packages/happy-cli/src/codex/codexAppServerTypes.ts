@@ -66,7 +66,7 @@ export type ThreadItem =
     | { type: "agentMessage"; id: string; text: string; phase?: string | null; memoryCitation?: unknown | null }
     | { type: "reasoning"; id: string; summary?: string[]; content?: string[] }
     | { type: "commandExecution"; id: string; command: string; cwd?: string; status?: string; aggregatedOutput?: string | null; exitCode?: number | null; durationMs?: number | null }
-    | { type: "fileChange"; id: string; changes: unknown[]; status?: string }
+    | { type: "fileChange"; id: string; changes: unknown[] | Record<string, unknown>; status?: string }
     | { type: "mcpToolCall"; id: string; server: string; tool: string; status?: string; arguments?: unknown; result?: unknown; error?: unknown; durationMs?: number | null }
     | ({ type: string; id: string } & Record<string, unknown>);
 
@@ -84,6 +84,8 @@ export type ThreadTurn = {
 export type Thread = {
     id: ThreadId;
     forkedFromId?: string | null;
+    name?: string | null;
+    preview?: string | null;
     path?: string | null;
     cwd?: string;
     turns?: ThreadTurn[];

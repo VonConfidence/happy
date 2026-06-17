@@ -136,6 +136,8 @@ export interface SpawnSessionOptions {
      * session attaches to a forked Codex app-server thread.
      */
     resumeCodexThreadId?: string;
+    /** Whether this spawn came from the external Codex refresh/import flow. */
+    importedFromExternalCodex?: boolean;
     /** Happy session id this fork was branched from (lineage). */
     parentSessionId?: string;
     /** Happy message id used as the rewind point (only set for "duplicate"). */

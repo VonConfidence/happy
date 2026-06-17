@@ -7,6 +7,7 @@ import { getAvailablePermissionModes, resolveCurrentOption } from '@/components/
 import { buildResumeCommand, buildResumeCommandBlock, ResumeCommandBlock } from './resumeCommand';
 
 export type SessionState = 'disconnected' | 'thinking' | 'waiting' | 'permission_required';
+export const CODEX_SESSION_TITLE_PREFIX = '[codex]: ';
 
 export interface SessionStatus {
     state: SessionState;
@@ -95,10 +96,18 @@ export function useSessionStatus(session: Session): SessionStatus {
  * Returns the last segment of the path, or 'unknown' if no path is available.
  */
 export function getSessionName(session: Session): string {
-    if (session.metadata?.summary) {
-        return session.metadata.summary.text;
+    const summaryText = session.metadata?.summary?.text?.trim();
+    const metadataName = session.metadata?.name?.trim();
+    const baseTitle = summaryText || metadataName || t('session.newChat');
+    return session.metadata?.importedFromExternalCodex ? prefixCodexSessionTitle(baseTitle) : baseTitle;
+}
+
+export function prefixCodexSessionTitle(title: string): string {
+    const normalizedTitle = title.trim();
+    if (normalizedTitle.startsWith(CODEX_SESSION_TITLE_PREFIX)) {
+        return normalizedTitle;
     }
-    return t('session.newChat');
+    return `${CODEX_SESSION_TITLE_PREFIX}${normalizedTitle}`;
 }
 
 /**

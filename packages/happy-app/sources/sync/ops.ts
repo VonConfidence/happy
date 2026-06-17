@@ -151,6 +151,8 @@ export interface SpawnSessionOptions {
      * session attaches to an app-server thread created by fork / duplicate.
      */
     resumeCodexThreadId?: string;
+    /** Whether this session was imported from the external Codex refresh list. */
+    importedFromExternalCodex?: boolean;
     /** Happy session id this fork was branched from (lineage). */
     parentSessionId?: string;
     /** Happy message id used as the rewind point (only set for "duplicate"). */
@@ -225,7 +227,18 @@ export interface ResumeSessionOptions {
  */
 export async function machineSpawnNewSession(options: SpawnSessionOptions): Promise<SpawnSessionResult> {
 
-    const { machineId, directory, approvedNewDirectoryCreation = false, token, agent, resumeClaudeSessionId, resumeCodexThreadId, parentSessionId, forkedFromMessageId } = options;
+    const {
+        machineId,
+        directory,
+        approvedNewDirectoryCreation = false,
+        token,
+        agent,
+        resumeClaudeSessionId,
+        resumeCodexThreadId,
+        importedFromExternalCodex,
+        parentSessionId,
+        forkedFromMessageId,
+    } = options;
 
     try {
         const result = await apiSocket.machineRPC<SpawnSessionResult, {
@@ -236,12 +249,13 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             agent?: 'codex' | 'claude' | 'gemini' | 'openclaw',
             resumeClaudeSessionId?: string,
             resumeCodexThreadId?: string,
+            importedFromExternalCodex?: boolean,
             parentSessionId?: string,
             forkedFromMessageId?: string,
         }>(
             machineId,
             'spawn-happy-session',
-            { type: 'spawn-in-directory', directory, approvedNewDirectoryCreation, token, agent, resumeClaudeSessionId, resumeCodexThreadId, parentSessionId, forkedFromMessageId }
+            { type: 'spawn-in-directory', directory, approvedNewDirectoryCreation, token, agent, resumeClaudeSessionId, resumeCodexThreadId, importedFromExternalCodex, parentSessionId, forkedFromMessageId }
         );
         return result;
     } catch (error) {

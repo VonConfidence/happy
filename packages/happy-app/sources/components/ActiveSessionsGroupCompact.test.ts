@@ -340,7 +340,7 @@ describe('ActiveSessionsGroupCompact external codex sessions', () => {
         });
 
         expect(tree.root.findAllByProps({ children: 'Codex' }).length).toBeGreaterThan(0);
-        expect(tree.root.findAllByProps({ children: 'External Codex Thread' }).length).toBeGreaterThan(0);
+        expect(tree.root.findAllByProps({ children: '[codex]: External Codex Thread' }).length).toBeGreaterThan(0);
     });
 
     it('imports an external codex session into a happy session when clicking the external row', async () => {
@@ -362,7 +362,7 @@ describe('ActiveSessionsGroupCompact external codex sessions', () => {
         });
 
         const importButton = tree.root.findByProps({
-            accessibilityLabel: 'Import external Codex session External Codex Thread',
+            accessibilityLabel: 'Import external Codex session [codex]: External Codex Thread',
         });
 
         await act(async () => {
@@ -376,6 +376,7 @@ describe('ActiveSessionsGroupCompact external codex sessions', () => {
             approvedNewDirectoryCreation: false,
             agent: 'codex',
             resumeCodexThreadId: 'thread-2',
+            importedFromExternalCodex: true,
         });
         expect(refreshSessionsMock).toHaveBeenCalledTimes(1);
         expect(navigateToSessionMock).toHaveBeenCalledWith('imported-session-id');
