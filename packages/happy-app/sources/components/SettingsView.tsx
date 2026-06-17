@@ -1,4 +1,4 @@
-import { View, ScrollView, Pressable, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 import { Image } from 'expo-image';
 import * as React from 'react';
@@ -7,28 +7,24 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useAuth } from '@/auth/AuthContext';
-import { Typography } from "@/constants/Typography";
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
 import { useConnectTerminal } from '@/hooks/useConnectTerminal';
-import { useEntitlement, useLocalSettingMutable, useSetting } from '@/sync/storage';
+import { useLocalSettingMutable, useSetting } from '@/sync/storage';
 import { sync } from '@/sync/sync';
-import { isUsingCustomServer } from '@/sync/serverConfig';
-import { trackPaywallButtonClicked, trackWhatsNewClicked } from '@/track';
+import { trackWhatsNewClicked } from '@/track';
 import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/useMultiClick';
 import { useAllMachines } from '@/sync/storage';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { useUnistyles } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { getGitHubOAuthParams, disconnectGitHub } from '@/sync/apiGithub';
 import { disconnectService } from '@/sync/apiServices';
 import { useProfile } from '@/sync/storage';
-import { getDisplayName, getAvatarUrl, getBio } from '@/sync/profile';
-import { Avatar } from '@/components/Avatar';
 import { t } from '@/text';
+import { settingsViewVisibility } from './settingsVisibility';
 
 type BuildConfig = {
     buildCommitSha?: unknown;
@@ -85,9 +81,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const versionSubtitle = formatBuildSubtitle(getBuildConfig());
     const auth = useAuth();
     const [devModeEnabled, setDevModeEnabled] = useLocalSettingMutable('devModeEnabled');
-    const isPro = __DEV__ || useEntitlement('pro');
     const experiments = useSetting('experiments');
-    const isCustomServer = isUsingCustomServer();
     const [showOfflineMachines, setShowOfflineMachines] = React.useState(false);
     const allMachinesWithOffline = useAllMachines({ includeOffline: true });
     const offlineMachineCount = React.useMemo(
@@ -101,9 +95,6 @@ export const SettingsView = React.memo(function SettingsView() {
         [allMachinesWithOffline, showOfflineMachines]
     );
     const profile = useProfile();
-    const displayName = getDisplayName(profile);
-    const avatarUrl = getAvatarUrl(profile);
-    const bio = getBio(profile);
 
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
 
@@ -113,16 +104,6 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const handleReportIssue = async () => {
         await openExternalUrl('https://github.com/slopus/happy/issues');
-    };
-
-    const handleSubscribe = async () => {
-        trackPaywallButtonClicked('voluntary_support');
-        const result = await sync.presentPaywall('voluntary_support');
-        if (!result.success) {
-            console.error('Failed to present paywall:', result.error);
-        } else if (result.purchased) {
-            console.log('Purchase successful!');
-        }
     };
 
     // Use the multi-click hook for version clicks
@@ -183,41 +164,9 @@ export const SettingsView = React.memo(function SettingsView() {
     return (
 
         <ItemList style={{ paddingTop: 0 }}>
-            {/* App Info Header */}
-            <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                <View style={{ alignItems: 'center', paddingVertical: 24, backgroundColor: theme.colors.surface, marginTop: 16, borderRadius: 12, marginHorizontal: 16 }}>
-                    {profile.firstName ? (
-                        // Profile view: Avatar + name + version
-                        <>
-                            <View style={{ marginBottom: 12 }}>
-                                <Avatar
-                                    id={profile.id}
-                                    size={90}
-                                    imageUrl={avatarUrl}
-                                    thumbhash={profile.avatar?.thumbhash}
-                                />
-                            </View>
-                            <Text style={{ fontSize: 20, fontWeight: '600', color: theme.colors.text, marginBottom: bio ? 4 : 8 }}>
-                                {displayName}
-                            </Text>
-                            {bio && (
-                                <Text style={{ fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', marginBottom: 8, paddingHorizontal: 16 }}>
-                                    {bio}
-                                </Text>
-                            )}
-                        </>
-                    ) : (
-                        // Logo view: Original logo + version
-                        <>
-                            <Image
-                                source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
-                                contentFit="contain"
-                                style={{ width: 300, height: 90, marginBottom: 12 }}
-                            />
-                        </>
-                    )}
-                </View>
-            </View>
+            {settingsViewVisibility.showHero && (
+                <View />
+            )}
 
             {/* Connect Terminal - Only show on native platforms */}
             {Platform.OS !== 'web' && (
@@ -250,16 +199,9 @@ export const SettingsView = React.memo(function SettingsView() {
                 </ItemGroup>
             )}
 
-            {/* Support Us */}
-            <ItemGroup>
-                <Item
-                    title={t('settings.supportUs')}
-                    subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-                    icon={<Ionicons name="heart" size={29} color="#FF3B30" />}
-                    showChevron={false}
-                    onPress={isPro ? undefined : handleSubscribe}
-                />
-            </ItemGroup>
+            {settingsViewVisibility.showSupportUs && (
+                <ItemGroup>{null}</ItemGroup>
+            )}
 
             <ItemGroup title={t('settings.connectedAccounts')}>
                 <Item

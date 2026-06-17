@@ -37,6 +37,7 @@
     },
     "pnpm": {
         "overrides": {
+            "@expo/dom-webview": "55.0.5",
             "whatwg-url": "14.2.0",
             "parse-path": "7.0.3",
             "@types/parse-path": "7.0.3"

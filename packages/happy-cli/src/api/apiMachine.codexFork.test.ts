@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { codexClientMethods } = vi.hoisted(() => ({
+const { codexClientMethods, listProjectSessions } = vi.hoisted(() => ({
     codexClientMethods: {
         connect: vi.fn(),
         disconnect: vi.fn(),
@@ -9,10 +9,15 @@ const { codexClientMethods } = vi.hoisted(() => ({
         rollbackThread: vi.fn(),
         injectItems: vi.fn(),
     },
+    listProjectSessions: vi.fn(),
 }));
 
 vi.mock('@/codex/codexAppServerClient', () => ({
     CodexAppServerClient: vi.fn().mockImplementation(() => codexClientMethods),
+}));
+
+vi.mock('@/codex/listProjectSessions', () => ({
+    listProjectSessions,
 }));
 
 function machineClient() {
@@ -32,6 +37,7 @@ describe('ApiMachineClient Codex fork RPCs', () => {
         for (const method of Object.values(codexClientMethods)) {
             method.mockReset();
         }
+        listProjectSessions.mockReset();
         codexClientMethods.connect.mockResolvedValue(undefined);
         codexClientMethods.disconnect.mockResolvedValue(undefined);
     });
@@ -125,6 +131,36 @@ describe('ApiMachineClient Codex fork RPCs', () => {
         expect(codexClientMethods.readThread).toHaveBeenCalledWith({
             threadId: 'thread-source',
             includeTurns: true,
+        });
+    });
+
+    it('lists external Codex project sessions', async () => {
+        listProjectSessions.mockResolvedValue([
+            { codexThreadId: 'thread-1', title: 'Fix sidebar', updatedAt: 1_718_506_800_000, previewText: 'Fix sidebar' },
+        ]);
+
+        const { ApiMachineClient } = await import('./apiMachine');
+        const client = new ApiMachineClient('token', machineClient());
+        client.setRPCHandlers({
+            spawnSession: vi.fn(),
+            stopSession: vi.fn(),
+            requestShutdown: vi.fn(),
+        });
+
+        const result = await handlersFrom(client).get('machine-1:codex-list-project-sessions')?.({
+            directory: '/repo/app',
+            importedThreadIds: ['thread-9'],
+        });
+
+        expect(result).toEqual({
+            type: 'success',
+            sessions: [
+                { codexThreadId: 'thread-1', title: 'Fix sidebar', updatedAt: 1_718_506_800_000, previewText: 'Fix sidebar' },
+            ],
+        });
+        expect(listProjectSessions).toHaveBeenCalledWith({
+            directory: '/repo/app',
+            importedThreadIds: new Set(['thread-9']),
         });
     });
 

@@ -1,10 +1,13 @@
 import { trimIdent } from '@/utils/trimIdent';
+import type { ApprovalPolicy, SandboxMode } from './codexAppServerTypes';
 
 type ResumeThreadClient = {
     resumeThread: (opts: {
         threadId: string;
         cwd: string;
         mcpServers: Record<string, unknown>;
+        approvalPolicy: ApprovalPolicy;
+        sandbox: SandboxMode;
     }) => Promise<{ threadId: string; model: string }>;
 };
 
@@ -24,12 +27,16 @@ export async function resumeExistingThread(opts: {
     threadId: string;
     cwd: string;
     mcpServers: Record<string, unknown>;
+    approvalPolicy: ApprovalPolicy;
+    sandbox: SandboxMode;
 }): Promise<{ threadId: string; model: string }> {
     try {
         const resumedThread = await opts.client.resumeThread({
             threadId: opts.threadId,
             cwd: opts.cwd,
             mcpServers: opts.mcpServers,
+            approvalPolicy: opts.approvalPolicy,
+            sandbox: opts.sandbox,
         });
 
         opts.session.updateMetadata((currentMetadata) => ({

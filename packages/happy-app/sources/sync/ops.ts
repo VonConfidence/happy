@@ -5,7 +5,7 @@
 
 import { apiSocket } from './apiSocket';
 import { sync } from './sync';
-import type { MachineMetadata } from './storageTypes';
+import type { MachineMetadata, Metadata, Session } from './storageTypes';
 
 // Strict type definitions for all operations
 
@@ -202,6 +202,17 @@ export type CodexListRewindPointsResult =
     | { type: 'success'; points: CodexRewindPoint[] }
     | { type: 'error'; errorMessage: string };
 
+export interface CodexProjectSessionSummary {
+    codexThreadId: string;
+    title: string;
+    updatedAt: number;
+    previewText?: string;
+}
+
+export type CodexListProjectSessionsResult =
+    | { type: 'success'; sessions: CodexProjectSessionSummary[] }
+    | { type: 'error'; errorMessage: string };
+
 export interface ResumeSessionOptions {
     machineId: string;
     sessionId: string;
@@ -393,6 +404,29 @@ export async function codexListRewindPoints(
     }
 }
 
+export async function listCodexProjectSessions(options: {
+    machineId: string;
+    directory: string;
+    importedThreadIds: string[];
+}): Promise<CodexListProjectSessionsResult> {
+    const { machineId, directory, importedThreadIds } = options;
+    try {
+        return await apiSocket.machineRPC<CodexListProjectSessionsResult, {
+            directory: string;
+            importedThreadIds: string[];
+        }>(
+            machineId,
+            'codex-list-project-sessions',
+            { directory, importedThreadIds },
+        );
+    } catch (error) {
+        return {
+            type: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Failed to list Codex project sessions',
+        };
+    }
+}
+
 export async function machineResumeSession(options: ResumeSessionOptions & { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> {
     const { machineId, sessionId, model, permissionMode } = options;
 
@@ -546,6 +580,98 @@ export async function machineUpdateMetadata(
     }
 
     throw new Error('Unexpected error in machineUpdateMetadata');
+}
+
+/**
+ * Update session metadata with optimistic concurrency control and automatic retry
+ */
+export async function sessionUpdateMetadata(
+    sessionId: string,
+    metadata: Metadata,
+    expectedVersion: number,
+    mergeOnConflict: (latestMetadata: Metadata) => Metadata = () => metadata,
+    maxRetries: number = 3,
+): Promise<{ version: number; metadata: Metadata }> {
+    let currentVersion = expectedVersion;
+    let currentMetadata = { ...metadata };
+    let retryCount = 0;
+
+    const sessionEncryption = sync.encryption.getSessionEncryption(sessionId);
+    if (!sessionEncryption) {
+        throw new Error(`Session encryption not found for ${sessionId}`);
+    }
+
+    while (retryCount < maxRetries) {
+        const encryptedMetadata = await sessionEncryption.encryptRaw(currentMetadata);
+
+        const result = await apiSocket.emitWithAck<{
+            result: 'success' | 'version-mismatch' | 'error';
+            version?: number;
+            metadata?: string;
+            message?: string;
+        }>('update-metadata', {
+            sid: sessionId,
+            metadata: encryptedMetadata,
+            expectedVersion: currentVersion,
+        });
+
+        if (result.result === 'success') {
+            return {
+                version: result.version!,
+                metadata: await sessionEncryption.decryptRaw(result.metadata!) as Metadata,
+            };
+        }
+
+        if (result.result === 'version-mismatch') {
+            currentVersion = result.version!;
+            const latestMetadata = await sessionEncryption.decryptRaw(result.metadata!) as Metadata;
+            currentMetadata = mergeOnConflict(latestMetadata);
+            retryCount++;
+
+            if (retryCount >= maxRetries) {
+                throw new Error(`Failed to update after ${maxRetries} retries due to version conflicts`);
+            }
+
+            continue;
+        }
+
+        throw new Error(result.message || 'Failed to update session metadata');
+    }
+
+    throw new Error('Unexpected error in sessionUpdateMetadata');
+}
+
+/**
+ * Rename a session by updating its title metadata.
+ */
+export async function sessionRename(
+    session: Session,
+    title: string,
+): Promise<{ version: number; metadata: Metadata }> {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+        throw new Error('Session title cannot be empty');
+    }
+
+    if (!session.metadata) {
+        throw new Error('Session metadata is unavailable');
+    }
+
+    const buildMetadata = (baseMetadata: Metadata): Metadata => ({
+        ...baseMetadata,
+        name: trimmedTitle,
+        summary: {
+            text: trimmedTitle,
+            updatedAt: Date.now(),
+        },
+    });
+
+    return sessionUpdateMetadata(
+        session.id,
+        buildMetadata(session.metadata),
+        session.metadataVersion,
+        (latestMetadata) => buildMetadata(latestMetadata),
+    );
 }
 
 /**

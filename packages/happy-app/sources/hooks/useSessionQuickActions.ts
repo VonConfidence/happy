@@ -30,6 +30,7 @@ interface UseSessionQuickActionsOptions {
     onAfterArchive?: () => void;
     onAfterDelete?: () => void;
     onAfterCopySessionMetadata?: () => void;
+    onRename?: () => void;
 }
 
 type ResumeAvailability = {
@@ -105,6 +106,7 @@ export function useSessionQuickActions(
     const {
         onAfterArchive,
         onAfterCopySessionMetadata,
+        onRename,
     } = options;
     const router = useRouter();
     const navigateToSession = useNavigateToSession();
@@ -254,6 +256,10 @@ export function useSessionQuickActions(
             { id: 'details', icon: 'information-circle-outline', label: t('profile.details'), onPress: openDetails },
         ];
 
+        if (onRename) {
+            items.push({ id: 'rename', icon: 'create-outline', label: t('common.rename'), onPress: onRename });
+        }
+
         if (resumeAvailability.canShowResume) {
             items.push({ id: 'resume', icon: 'play-circle-outline', label: t('sessionInfo.resumeSession'), onPress: resumeSession });
         }
@@ -281,6 +287,7 @@ export function useSessionQuickActions(
         forkSession,
         openDetails,
         openDuplicateSheet,
+        onRename,
         resumeAvailability.canShowResume,
         resumeSession,
     ]);
@@ -321,8 +328,8 @@ export function useSessionQuickActions(
  * Lightweight hook for list items that only have a sessionId.
  * Returns a long-press handler that shows the action alert on mobile.
  */
-export function useSessionActionAlert(sessionId: string) {
+export function useSessionActionAlert(sessionId: string, options: Pick<UseSessionQuickActionsOptions, 'onRename'> = {}) {
     const session = useSession(sessionId);
-    const { showActionAlert } = useSessionQuickActions(session!, {});
+    const { showActionAlert } = useSessionQuickActions(session!, options);
     return session ? showActionAlert : undefined;
 }

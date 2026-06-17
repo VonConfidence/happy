@@ -26,6 +26,8 @@ describe('resumeExistingThread', () => {
             threadId: '019ccca2-1a77-7481-9873-de72f3464372',
             cwd: '/tmp/project',
             mcpServers: { happy: { command: 'happy-mcp' } },
+            approvalPolicy: 'never',
+            sandbox: 'danger-full-access',
         });
 
         expect(result).toEqual({
@@ -36,6 +38,8 @@ describe('resumeExistingThread', () => {
             threadId: '019ccca2-1a77-7481-9873-de72f3464372',
             cwd: '/tmp/project',
             mcpServers: { happy: { command: 'happy-mcp' } },
+            approvalPolicy: 'never',
+            sandbox: 'danger-full-access',
         });
         expect(metadataHandlers).toHaveLength(1);
         expect(metadataHandlers[0]({ existing: true })).toEqual({
@@ -69,6 +73,8 @@ describe('resumeExistingThread', () => {
                 threadId: 'thread-404',
                 cwd: '/tmp/project',
                 mcpServers: {},
+                approvalPolicy: 'never',
+                sandbox: 'danger-full-access',
             }),
         ).rejects.toThrow('Failed to resume Codex thread thread-404: thread not found');
     });

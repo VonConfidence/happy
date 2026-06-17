@@ -98,7 +98,7 @@ export default function DeviceInfo() {
                     />
                     <Item
                         title="Layout Max Width"
-                        detail={`${layout.maxWidth}px`}
+                        detail={typeof layout.maxWidth === 'number' ? `${layout.maxWidth}px` : String(layout.maxWidth)}
                     />
                 </ItemGroup>
 

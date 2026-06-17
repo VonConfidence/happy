@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
+  findClaudePackageDir,
+  resolveClaudeEntrypoint,
+  normalizeClaudeResolvedPath,
   findGlobalClaudeCliPath,
   findClaudeInPath,
   detectSourceFromPath,
@@ -13,6 +18,69 @@ import {
 } from '../scripts/claude_version_utils.cjs';
 
 describe('Claude Version Utils - Cross-Platform Detection', () => {
+
+  describe('resolveClaudeEntrypoint', () => {
+    it('should use cli-wrapper.cjs when npm wrapper still has Windows placeholder on Unix', () => {
+      if (process.platform === 'win32') return;
+
+      const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-wrapper-'));
+      try {
+        fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({
+          name: '@anthropic-ai/claude-code',
+          bin: { claude: 'bin/claude.exe' }
+        }));
+        fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(pkgDir, 'bin', 'claude.exe'), Buffer.from('MZstub'));
+        fs.writeFileSync(path.join(pkgDir, 'cli-wrapper.cjs'), 'module.exports = {};');
+
+        const result = resolveClaudeEntrypoint(pkgDir);
+        expect(result).toBe(path.join(pkgDir, 'cli-wrapper.cjs'));
+      } finally {
+        fs.rmSync(pkgDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should use bin path once postinstall replaced placeholder with native binary', () => {
+      if (process.platform === 'win32') return;
+
+      const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-native-'));
+      try {
+        fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({
+          name: '@anthropic-ai/claude-code',
+          bin: { claude: 'bin/claude.exe' }
+        }));
+        fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(pkgDir, 'bin', 'claude.exe'), Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+        fs.writeFileSync(path.join(pkgDir, 'cli-wrapper.cjs'), 'module.exports = {};');
+
+        const result = resolveClaudeEntrypoint(pkgDir);
+        expect(result).toBe(path.join(pkgDir, 'bin', 'claude.exe'));
+      } finally {
+        fs.rmSync(pkgDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should normalize a resolved PATH entry to cli-wrapper.cjs for text placeholders on Unix', () => {
+      if (process.platform === 'win32') return;
+
+      const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-path-wrapper-'));
+      try {
+        fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({
+          name: '@anthropic-ai/claude-code',
+          bin: { claude: 'bin/claude.exe' }
+        }));
+        fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(pkgDir, 'bin', 'claude.exe'), 'echo "missing native binary"\n');
+        fs.writeFileSync(path.join(pkgDir, 'cli-wrapper.cjs'), 'module.exports = {};');
+
+        const binPath = path.join(pkgDir, 'bin', 'claude.exe');
+        expect(findClaudePackageDir(binPath)).toBe(pkgDir);
+        expect(normalizeClaudeResolvedPath(binPath)).toBe(path.join(pkgDir, 'cli-wrapper.cjs'));
+      } finally {
+        fs.rmSync(pkgDir, { recursive: true, force: true });
+      }
+    });
+  });
 
   describe('detectSourceFromPath', () => {
 

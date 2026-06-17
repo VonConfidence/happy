@@ -199,7 +199,7 @@ const CodexPatchFileView = React.memo(function CodexPatchFileView(props: {
 }) {
     const { file, change, metadata, permissionFooter } = props;
     const { theme } = useUnistyles();
-    const [expanded, setExpanded] = React.useState(false);
+    const [expanded, setExpanded] = React.useState(() => Boolean(permissionFooter));
 
     const filePath = resolvePath(file, metadata);
     const diffInput = getPatchInput(change);

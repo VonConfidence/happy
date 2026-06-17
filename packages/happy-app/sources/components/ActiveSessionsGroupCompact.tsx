@@ -1,15 +1,15 @@
 import React from 'react';
-import { View, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform, ActivityIndicator, TextInput } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Text } from '@/components/StyledText';
-import { Machine } from '@/sync/storageTypes';
+import { Machine, Session } from '@/sync/storageTypes';
 import { SessionRowData } from '@/sync/storage';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { type SessionState, formatPathRelativeToHome, vibingMessages, formatLastSeen } from '@/utils/sessionUtils';
+import { type SessionState, formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from './StatusDot';
-import { useAllMachines, useSessionGitStatus } from '@/sync/storage';
+import { storage, useAllMachines, useSession, useSessionGitStatus, useSessions } from '@/sync/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
@@ -17,10 +17,14 @@ import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
-import { sessionKill } from '@/sync/ops';
+import { listCodexProjectSessions, machineSpawnNewSession, sessionKill, sessionRename, type CodexProjectSessionSummary } from '@/sync/ops';
 import { isWorktreePath, getRepoPath, getWorktreeName } from '@/utils/worktree';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
 import { useRouter } from 'expo-router';
+import { sync } from '@/sync/sync';
+import { Modal } from '@/modal';
+import { buildExternalCodexSectionState } from '@/utils/externalCodexSessions';
+import { isMachineOnline } from '@/utils/machineUtils';
 
 const STATUS_CONFIG: Record<SessionState, { color: string; dotColor: string; isPulsing: boolean; isConnected: boolean }> = {
     disconnected: { color: '#999', dotColor: '#999', isPulsing: false, isConnected: false },
@@ -54,93 +58,6 @@ function useSectionGitInfo(sessionId: string) {
     }, [gitStatus]);
 }
 
-// Section header: avatar | path + branch + tree icon + line changes | + button
-const SectionHeader = React.memo(({ session, displayPath }: { session: SessionRowData; displayPath: string }) => {
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-    const router = useRouter();
-    const draft = useNewSessionDraft();
-
-    const sessionPath = session.path || '';
-    const isWorktree = isWorktreePath(sessionPath);
-    const repoPath = isWorktree ? getRepoPath(sessionPath) : sessionPath;
-    const repoDisplayPath = isWorktree
-        ? formatPathRelativeToHome(repoPath, session.homeDir ?? undefined)
-        : displayPath;
-    const repoFolderName = repoPath.split(/[/\\]/).filter(Boolean).pop() || repoDisplayPath;
-    const worktreeName = isWorktree ? getWorktreeName(sessionPath) : null;
-
-    const gitInfo = useSectionGitInfo(session.id);
-    const branchName = worktreeName || gitInfo.branch;
-    const hasBranch = !!branchName;
-
-    const handleAdd = React.useCallback(() => {
-        const machineId = session.machineId;
-        if (machineId) {
-            draft.setMachineId(machineId);
-        }
-        const pathToSet = formatPathRelativeToHome(repoPath, session.homeDir ?? undefined);
-        draft.setPath(pathToSet);
-        draft.setSessionType(isWorktree ? 'worktree' : 'simple');
-        draft.setWorktreeKey(isWorktree ? sessionPath : null);
-        router.navigate('/new');
-    }, [session.machineId, session.homeDir, repoPath, isWorktree, sessionPath, draft, router]);
-
-    const [isHovered, setIsHovered] = React.useState(false);
-
-    return (
-        <View
-            style={hasBranch ? styles.sectionHeader : styles.sectionHeaderSingleLine}
-            // @ts-ignore - Web only events
-            onMouseEnter={() => setIsHovered(true)}
-            // @ts-ignore - Web only events
-            onMouseLeave={() => setIsHovered(false)}
-        >
-            {/* Avatar — vertically centered */}
-            <View style={styles.sectionHeaderAvatar}>
-                <Avatar id={session.avatarId} size={24} flavor={null} />
-            </View>
-
-            {/* Path + branch */}
-            <View style={styles.sectionHeaderContent}>
-                <Text style={styles.sectionHeaderPath} numberOfLines={1}>
-                    {repoFolderName}
-                </Text>
-                {hasBranch && (
-                    <View style={styles.branchRow}>
-                        <Text style={styles.branchText} numberOfLines={1}>
-                            {branchName}
-                        </Text>
-                        {isWorktree && (
-                            <MaterialCommunityIcons
-                                name="tree"
-                                size={11}
-                                color={theme.colors.textSecondary}
-                                style={styles.worktreeIcon}
-                            />
-                        )}
-                        {gitInfo.linesAdded > 0 && (
-                            <Text style={styles.addedText}>+{gitInfo.linesAdded}</Text>
-                        )}
-                        {gitInfo.linesRemoved > 0 && (
-                            <Text style={styles.removedText}>-{gitInfo.linesRemoved}</Text>
-                        )}
-                    </View>
-                )}
-            </View>
-
-            {/* + button — vertically centered, large hit area; desktop: hover-only */}
-            <Pressable
-                onPress={handleAdd}
-                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-                style={[styles.addButton, { opacity: Platform.OS !== 'web' || isHovered ? 1 : 0 }]}
-            >
-                <Ionicons name="add-outline" size={14} color={theme.colors.textSecondary} />
-            </Pressable>
-        </View>
-    );
-});
-
 // Full-width separator between machine groups: ——— 🖥 name ———
 const MachineSeparator = React.memo(({ machineName, machineId }: { machineName: string; machineId: string }) => {
     const styles = stylesheet;
@@ -166,6 +83,7 @@ const MachineSeparator = React.memo(({ machineName, machineId }: { machineName: 
 export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: ActiveSessionsGroupProps) {
     const styles = stylesheet;
     const machines = useAllMachines();
+    const allSessions = useSessions();
 
     const machinesMap = React.useMemo(() => {
         const map: Record<string, Machine> = {};
@@ -174,6 +92,19 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
         });
         return map;
     }, [machines]);
+
+    const importedCodexThreadIdsByMachineId = React.useMemo(() => {
+        const out: Record<string, string[]> = {};
+        for (const item of allSessions ?? []) {
+            if (typeof item === 'string') continue;
+            const session = item as Session;
+            const machineId = session.metadata?.machineId;
+            const codexThreadId = session.metadata?.codexThreadId;
+            if (!machineId || !codexThreadId) continue;
+            (out[machineId] ??= []).push(codexThreadId);
+        }
+        return out;
+    }, [allSessions]);
 
     // Group sessions by machine, then by project within each machine
     const { machineGroups, hasMultipleMachines } = React.useMemo(() => {
@@ -245,22 +176,15 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
                             if (!firstSession) return null;
 
                             return (
-                                <View key={projectPath}>
-                                    <SectionHeader
-                                        session={firstSession}
-                                        displayPath={projectGroup.displayPath}
-                                    />
-                                    <View style={styles.projectCard}>
-                                        {projectGroup.sessions.map((session, index) => (
-                                            <CompactSessionRow
-                                                key={session.id}
-                                                session={session}
-                                                selected={selectedSessionId === session.id}
-                                                showBorder={index < projectGroup.sessions.length - 1}
-                                            />
-                                        ))}
-                                    </View>
-                                </View>
+                                <ProjectGroupCard
+                                    key={projectPath}
+                                    machine={machinesMap[machineGroup.machineId] ?? null}
+                                    projectPath={projectPath}
+                                    displayPath={projectGroup.displayPath}
+                                    sessions={projectGroup.sessions}
+                                    selectedSessionId={selectedSessionId}
+                                    importedThreadIds={importedCodexThreadIdsByMachineId[machineGroup.machineId] ?? []}
+                                />
                             );
                         })}
                     </React.Fragment>
@@ -270,10 +194,308 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
     );
 }
 
+const ProjectGroupCard = React.memo(({
+    machine,
+    projectPath,
+    displayPath,
+    sessions,
+    selectedSessionId,
+    importedThreadIds,
+}: {
+    machine: Machine | null;
+    projectPath: string;
+    displayPath: string;
+    sessions: SessionRowData[];
+    selectedSessionId?: string;
+    importedThreadIds: string[];
+}) => {
+    const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const navigateToSession = useNavigateToSession();
+    const [externalCodexSessions, setExternalCodexSessions] = React.useState<CodexProjectSessionSummary[]>([]);
+    const [hasLoadedExternalCodexSessions, setHasLoadedExternalCodexSessions] = React.useState(false);
+    const [isRefreshingExternalCodex, setIsRefreshingExternalCodex] = React.useState(false);
+    const [importingCodexThreadId, setImportingCodexThreadId] = React.useState<string | null>(null);
+
+    const firstSession = sessions[0];
+    if (!firstSession) {
+        return null;
+    }
+
+    const externalCodexSection = React.useMemo(() => buildExternalCodexSectionState({
+        selectedMachineId: machine?.id ?? null,
+        isMachineOnline: !!machine && isMachineOnline(machine),
+        resolvedSelectedPath: projectPath || null,
+        importedThreadIds,
+        sessions: externalCodexSessions,
+    }), [externalCodexSessions, importedThreadIds, machine, projectPath]);
+
+    const refreshExternalCodexSessions = React.useCallback(async () => {
+        if (!machine?.id || !projectPath) {
+            return;
+        }
+
+        setIsRefreshingExternalCodex(true);
+        try {
+            const result = await listCodexProjectSessions({
+                machineId: machine.id,
+                directory: projectPath,
+                importedThreadIds,
+            });
+
+            if (result.type === 'success') {
+                setExternalCodexSessions(result.sessions);
+                setHasLoadedExternalCodexSessions(true);
+                return;
+            }
+
+            Modal.alert(t('common.error'), result.errorMessage);
+        } finally {
+            setIsRefreshingExternalCodex(false);
+        }
+    }, [importedThreadIds, machine?.id, projectPath]);
+
+    const importExternalCodexSession = React.useCallback(async (externalSession: CodexProjectSessionSummary) => {
+        if (!machine?.id || !projectPath) {
+            Modal.alert(t('common.error'), 'Unable to determine project path for this machine');
+            return;
+        }
+        if (!isMachineOnline(machine)) {
+            Modal.alert(t('common.error'), 'Machine is offline');
+            return;
+        }
+
+        const spawnImportedSession = async (approvedNewDirectoryCreation: boolean): Promise<void> => {
+            const result = await machineSpawnNewSession({
+                machineId: machine.id,
+                directory: projectPath,
+                approvedNewDirectoryCreation,
+                agent: 'codex',
+                resumeCodexThreadId: externalSession.codexThreadId,
+            });
+
+            switch (result.type) {
+                case 'success':
+                    await sync.refreshSessions();
+                    navigateToSession(result.sessionId);
+                    return;
+                case 'requestToApproveDirectoryCreation': {
+                    const approved = await Modal.confirm(
+                        'Create Directory?',
+                        `The directory '${result.directory}' does not exist. Would you like to create it?`,
+                        { cancelText: t('common.cancel'), confirmText: t('common.create') },
+                    );
+                    if (approved) {
+                        await spawnImportedSession(true);
+                    }
+                    return;
+                }
+                case 'error':
+                    Modal.alert(t('common.error'), result.errorMessage);
+                    return;
+            }
+        };
+
+        setImportingCodexThreadId(externalSession.codexThreadId);
+        try {
+            await spawnImportedSession(false);
+        } finally {
+            setImportingCodexThreadId(null);
+        }
+    }, [machine, navigateToSession, projectPath]);
+
+    const showExternalCodexSection = isRefreshingExternalCodex || hasLoadedExternalCodexSessions || externalCodexSection.visibleSessions.length > 0;
+
+    return (
+        <View>
+            <ProjectSectionHeader
+                session={firstSession}
+                displayPath={displayPath}
+                projectPath={projectPath}
+                canRefreshExternalCodex={externalCodexSection.canRefresh}
+                isRefreshingExternalCodex={isRefreshingExternalCodex}
+                onRefreshExternalCodex={() => void refreshExternalCodexSessions()}
+            />
+            <View style={styles.projectCard}>
+                {sessions.map((session, index) => (
+                    <CompactSessionRow
+                        key={session.id}
+                        session={session}
+                        selected={selectedSessionId === session.id}
+                        showBorder={index < sessions.length - 1 || showExternalCodexSection}
+                    />
+                ))}
+
+                {showExternalCodexSection && (
+                    <View style={styles.externalCodexSection}>
+                        {externalCodexSection.visibleSessions.length > 0 ? (
+                            externalCodexSection.visibleSessions.map((session, index) => (
+                                <Pressable
+                                    key={session.codexThreadId}
+                                    accessibilityLabel={`Import external Codex session ${session.title}`}
+                                    onPress={() => void importExternalCodexSession(session)}
+                                    style={[
+                                        styles.externalCodexRow,
+                                        index < externalCodexSection.visibleSessions.length - 1 && styles.externalCodexRowWithBorder,
+                                    ]}
+                                >
+                                    <View style={[styles.externalCodexBadge, { backgroundColor: theme.colors.button.primary.disabled }]}>
+                                        <Text style={styles.externalCodexBadgeText}>Codex</Text>
+                                    </View>
+                                    <View style={styles.externalCodexContent}>
+                                        <Text style={styles.externalCodexTitle} numberOfLines={1}>
+                                            {session.title}
+                                        </Text>
+                                        <Text style={styles.externalCodexSubtitle} numberOfLines={1}>
+                                            {formatLastSeen(session.updatedAt, false)}
+                                            {session.previewText ? ` · ${session.previewText}` : ` · ${session.codexThreadId}`}
+                                        </Text>
+                                    </View>
+                                    {importingCodexThreadId === session.codexThreadId ? (
+                                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                    ) : (
+                                        <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />
+                                    )}
+                                </Pressable>
+                            ))
+                        ) : (
+                            <View style={styles.externalCodexEmptyState}>
+                                <Text style={styles.externalCodexEmptyText}>
+                                    {hasLoadedExternalCodexSessions
+                                        ? 'No external Codex sessions found for this project'
+                                        : 'Refreshing external Codex sessions...'}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+            </View>
+        </View>
+    );
+});
+
+const ProjectSectionHeader = React.memo(({
+    session,
+    displayPath,
+    projectPath,
+    canRefreshExternalCodex,
+    isRefreshingExternalCodex,
+    onRefreshExternalCodex,
+}: {
+    session: SessionRowData;
+    displayPath: string;
+    projectPath: string;
+    canRefreshExternalCodex: boolean;
+    isRefreshingExternalCodex: boolean;
+    onRefreshExternalCodex: () => void;
+}) => {
+    const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const router = useRouter();
+    const draft = useNewSessionDraft();
+
+    const sessionPath = session.path || '';
+    const isWorktree = isWorktreePath(sessionPath);
+    const repoPath = isWorktree ? getRepoPath(sessionPath) : sessionPath;
+    const repoDisplayPath = isWorktree
+        ? formatPathRelativeToHome(repoPath, session.homeDir ?? undefined)
+        : displayPath;
+    const repoFolderName = repoPath.split(/[/\\]/).filter(Boolean).pop() || repoDisplayPath;
+    const worktreeName = isWorktree ? getWorktreeName(sessionPath) : null;
+
+    const gitInfo = useSectionGitInfo(session.id);
+    const branchName = worktreeName || gitInfo.branch;
+    const hasBranch = !!branchName;
+
+    const handleAdd = React.useCallback(() => {
+        const machineId = session.machineId;
+        if (machineId) {
+            draft.setMachineId(machineId);
+        }
+        const pathToSet = formatPathRelativeToHome(repoPath, session.homeDir ?? undefined);
+        draft.setPath(pathToSet);
+        draft.setSessionType(isWorktree ? 'worktree' : 'simple');
+        draft.setWorktreeKey(isWorktree ? sessionPath : null);
+        router.navigate('/new');
+    }, [session.machineId, session.homeDir, repoPath, isWorktree, sessionPath, draft, router]);
+
+    const [isHovered, setIsHovered] = React.useState(false);
+    const buttonOpacity = Platform.OS !== 'web' || isHovered ? 1 : 0;
+
+    return (
+        <View
+            style={hasBranch ? styles.sectionHeader : styles.sectionHeaderSingleLine}
+            // @ts-ignore - Web only events
+            onMouseEnter={() => setIsHovered(true)}
+            // @ts-ignore - Web only events
+            onMouseLeave={() => setIsHovered(false)}
+        >
+            <View style={styles.sectionHeaderAvatar}>
+                <Avatar id={session.avatarId} size={24} flavor={null} />
+            </View>
+
+            <View style={styles.sectionHeaderContent}>
+                <Text style={styles.sectionHeaderPath} numberOfLines={1}>
+                    {repoFolderName}
+                </Text>
+                {hasBranch && (
+                    <View style={styles.branchRow}>
+                        <Text style={styles.branchText} numberOfLines={1}>
+                            {branchName}
+                        </Text>
+                        {isWorktree && (
+                            <MaterialCommunityIcons
+                                name="tree"
+                                size={11}
+                                color={theme.colors.textSecondary}
+                                style={styles.worktreeIcon}
+                            />
+                        )}
+                        {gitInfo.linesAdded > 0 && (
+                            <Text style={styles.addedText}>+{gitInfo.linesAdded}</Text>
+                        )}
+                        {gitInfo.linesRemoved > 0 && (
+                            <Text style={styles.removedText}>-{gitInfo.linesRemoved}</Text>
+                        )}
+                    </View>
+                )}
+            </View>
+
+            <View style={styles.headerButtons}>
+                <Pressable
+                    accessibilityLabel={`Refresh external Codex sessions for ${projectPath}`}
+                    onPress={onRefreshExternalCodex}
+                    disabled={!canRefreshExternalCodex || isRefreshingExternalCodex}
+                    hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                    style={[
+                        styles.refreshButton,
+                        { opacity: (!canRefreshExternalCodex ? 0.35 : buttonOpacity) },
+                    ]}
+                >
+                    {isRefreshingExternalCodex ? (
+                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    ) : (
+                        <Ionicons name="refresh" size={14} color={theme.colors.textSecondary} />
+                    )}
+                </Pressable>
+
+                <Pressable
+                    onPress={handleAdd}
+                    hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                    style={[styles.addButton, { opacity: buttonOpacity }]}
+                >
+                    <Ionicons name="add-outline" size={14} color={theme.colors.textSecondary} />
+                </Pressable>
+            </View>
+        </View>
+    );
+});
+
 // Compact session row with status dot indicator
 const CompactSessionRow = React.memo(({ session, selected, showBorder }: { session: SessionRowData; selected?: boolean; showBorder?: boolean }) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const fullSession = useSession(session.id);
     const baseStatus = STATUS_CONFIG[session.state];
     // Override to solid blue when session has unread results
     const status = session.hasUnread
@@ -283,6 +505,10 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
     const swipeableRef = React.useRef<Swipeable | null>(null);
     const swipeEnabled = Platform.OS !== 'web';
     const [actionsAnchor, setActionsAnchor] = React.useState<SessionActionsAnchor | null>(null);
+    const [isRenaming, setIsRenaming] = React.useState(false);
+    const [renameDraft, setRenameDraft] = React.useState(session.name);
+    const [isSubmittingRename, setIsSubmittingRename] = React.useState(false);
+    const ignoreNextBlurRef = React.useRef(false);
 
     const [archivingSession, performArchive] = useHappyAction(async () => {
         const result = await sessionKill(session.id);
@@ -297,8 +523,11 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
     }, [performArchive]);
 
     const handlePress = React.useCallback(() => {
+        if (isRenaming) {
+            return;
+        }
         navigateToSession(session.id);
-    }, [navigateToSession, session.id]);
+    }, [isRenaming, navigateToSession, session.id]);
 
     const handleContextMenu = React.useCallback((event: any) => {
         event.preventDefault?.();
@@ -311,11 +540,74 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
     }, []);
 
     const showActionAlert = useSessionActionAlert(session.id);
+    const beginRename = React.useCallback(() => {
+        swipeableRef.current?.close();
+        setActionsAnchor(null);
+        setRenameDraft(session.name);
+        setIsRenaming(true);
+    }, [session.name]);
+    const showRenameActionAlert = useSessionActionAlert(session.id, { onRename: beginRename });
     const menuProps = Platform.OS === 'web' ? {
         onContextMenu: handleContextMenu,
     } as any : {
-        onLongPress: showActionAlert,
+        onLongPress: showRenameActionAlert ?? showActionAlert,
     };
+
+    const cancelRename = React.useCallback(() => {
+        ignoreNextBlurRef.current = false;
+        setRenameDraft(session.name);
+        setIsSubmittingRename(false);
+        setIsRenaming(false);
+    }, [session.name]);
+
+    const submitRename = React.useCallback(async () => {
+        if (!fullSession || isSubmittingRename) {
+            return;
+        }
+
+        const trimmedTitle = renameDraft.trim();
+        if (!trimmedTitle) {
+            Modal.alert(t('common.error'), 'Session title cannot be empty');
+            return;
+        }
+
+        if (trimmedTitle === session.name) {
+            setIsRenaming(false);
+            return;
+        }
+
+        ignoreNextBlurRef.current = true;
+        setIsSubmittingRename(true);
+        try {
+            const result = await sessionRename(fullSession, trimmedTitle);
+            const latestSession = storage.getState().sessions[fullSession.id] ?? fullSession;
+            storage.getState().applySessions([{
+                ...latestSession,
+                metadata: result.metadata,
+                metadataVersion: result.version,
+                updatedAt: Date.now(),
+            }]);
+            setIsRenaming(false);
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : 'Failed to rename session',
+            );
+        } finally {
+            setIsSubmittingRename(false);
+            setTimeout(() => {
+                ignoreNextBlurRef.current = false;
+            }, 0);
+        }
+    }, [fullSession, isSubmittingRename, renameDraft, session.name]);
+
+    const handleRenameBlur = React.useCallback(() => {
+        if (ignoreNextBlurRef.current) {
+            ignoreNextBlurRef.current = false;
+            return;
+        }
+        cancelRename();
+    }, [cancelRename]);
 
     const renderLeadingIndicator = () => {
         let indicator: React.ReactNode = null;
@@ -343,20 +635,45 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
         );
     };
 
-    const itemContent = (
-        <Pressable
-            style={[
-                styles.sessionRow,
-                showBorder && styles.sessionRowWithBorder,
-                selected && styles.sessionRowSelected
-            ]}
-            onPress={handlePress}
-            {...menuProps}
-        >
-            <View style={styles.sessionContent}>
-                <View style={styles.sessionTitleRow}>
-                    {renderLeadingIndicator()}
+    const rowContent = (
+        <View style={styles.sessionContent}>
+            <View style={styles.sessionTitleRow}>
+                {renderLeadingIndicator()}
 
+                {isRenaming ? (
+                    <View style={styles.sessionTitleInputWrap}>
+                        <TextInput
+                            autoFocus
+                            blurOnSubmit={false}
+                            editable={!isSubmittingRename}
+                            onBlur={handleRenameBlur}
+                            onChangeText={setRenameDraft}
+                            onKeyPress={(event) => {
+                                if (event.nativeEvent.key === 'Escape') {
+                                    ignoreNextBlurRef.current = true;
+                                    cancelRename();
+                                }
+                                if (event.nativeEvent.key === 'Enter') {
+                                    ignoreNextBlurRef.current = true;
+                                }
+                            }}
+                            onSubmitEditing={() => {
+                                void submitRename();
+                            }}
+                            returnKeyType="done"
+                            selectTextOnFocus
+                            style={styles.sessionTitleInput}
+                            value={renameDraft}
+                        />
+                        {isSubmittingRename && (
+                            <ActivityIndicator
+                                color={theme.colors.textSecondary}
+                                size="small"
+                                style={styles.renameSpinner}
+                            />
+                        )}
+                    </View>
+                ) : (
                     <Text
                         style={[
                             styles.sessionTitle,
@@ -366,8 +683,32 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
                     >
                         {session.name}
                     </Text>
-                </View>
+                )}
             </View>
+        </View>
+    );
+
+    const itemContent = isRenaming ? (
+        <View
+            style={[
+                styles.sessionRow,
+                showBorder && styles.sessionRowWithBorder,
+                selected && styles.sessionRowSelected,
+            ]}
+        >
+            {rowContent}
+        </View>
+    ) : (
+        <Pressable
+            style={[
+                styles.sessionRow,
+                showBorder && styles.sessionRowWithBorder,
+                selected && styles.sessionRowSelected
+            ]}
+            onPress={handlePress}
+            {...menuProps}
+        >
+            {rowContent}
         </Pressable>
     );
 
@@ -378,6 +719,7 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
                 <SessionActionsPopover
                     anchor={actionsAnchor}
                     onClose={() => setActionsAnchor(null)}
+                    onRename={beginRename}
                     sessionId={session.id}
                     visible={!!actionsAnchor}
                 />
@@ -474,8 +816,67 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginLeft: 3,
     },
     addButton: {
-        marginLeft: 4,
+        marginLeft: 2,
         padding: 8,
+    },
+    headerButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 4,
+    },
+    refreshButton: {
+        padding: 8,
+    },
+    externalCodexSection: {
+        backgroundColor: theme.colors.surface,
+    },
+    externalCodexRow: {
+        minHeight: 52,
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 8,
+        paddingHorizontal: 16,
+        backgroundColor: theme.colors.surface,
+        gap: 10,
+    },
+    externalCodexRowWithBorder: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.divider,
+    },
+    externalCodexBadge: {
+        paddingHorizontal: 7,
+        paddingVertical: 4,
+        borderRadius: 999,
+        flexShrink: 0,
+    },
+    externalCodexBadgeText: {
+        fontSize: 11,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+    },
+    externalCodexContent: {
+        flex: 1,
+        minWidth: 0,
+    },
+    externalCodexTitle: {
+        fontSize: 13,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+    },
+    externalCodexSubtitle: {
+        marginTop: 2,
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
+    },
+    externalCodexEmptyState: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
+    externalCodexEmptyText: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
     },
     // Machine separator styles
     machineSeparator: {
@@ -532,10 +933,31 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    sessionTitleInputWrap: {
+        flex: 1,
+        minHeight: 34,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 10,
+        paddingHorizontal: 10,
+        backgroundColor: theme.colors.surfaceSelected,
+    },
+    sessionTitleInput: {
+        flex: 1,
+        fontSize: 15,
+        color: theme.colors.text,
+        paddingVertical: 0,
+        ...Typography.default('regular'),
+    },
     sessionTitle: {
         fontSize: 15,
         flex: 1,
         ...Typography.default('regular'),
+    },
+    renameSpinner: {
+        marginLeft: 8,
     },
     sessionTitleConnected: {
         color: theme.colors.text,

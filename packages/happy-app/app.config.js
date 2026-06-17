@@ -167,6 +167,14 @@ export default {
                     root: "./sources/app"
                 }
             ],
+            [
+                "expo-build-properties",
+                {
+                    ios: {
+                        buildReactNativeFromSource: true
+                    }
+                }
+            ],
             "expo-updates",
             "expo-asset",
             "expo-localization",

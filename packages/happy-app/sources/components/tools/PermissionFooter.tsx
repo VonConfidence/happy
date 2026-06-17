@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { sessionAllow, sessionDeny } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
-import { storage } from '@/sync/storage';
+import { storage, useSession, useSetting } from '@/sync/storage';
+import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { getAvailablePermissionModes, resolveCurrentOption } from '@/components/modelModeOptions';
 import { t } from '@/text';
 
 interface PermissionFooterProps {
@@ -23,10 +25,23 @@ interface PermissionFooterProps {
 
 export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, sessionId, toolName, toolInput, metadata }) => {
     const { theme } = useUnistyles();
+    const session = useSession(sessionId);
+    const agentDefaultOverrides = useSetting('agentDefaultOverrides');
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
     const [loadingAllEdits, setLoadingAllEdits] = useState(false);
     const [loadingBypass, setLoadingBypass] = useState(false);
     const [loadingForSession, setLoadingForSession] = useState(false);
+    const [autoApproveFailedPermissionId, setAutoApproveFailedPermissionId] = useState<string | null>(null);
+    const autoApprovedPermissionIdRef = useRef<string | null>(null);
+    const sessionMetadata = session?.metadata ?? metadata ?? null;
+    const flavor = sessionMetadata?.flavor ?? metadata?.flavor ?? null;
+    const availableModes = getAvailablePermissionModes(flavor, sessionMetadata, t);
+    const effectiveAgentDefaults = resolveAgentDefaultConfig(agentDefaultOverrides, flavor);
+    const effectivePermissionMode = resolveCurrentOption(availableModes, [
+        session?.permissionMode,
+        effectiveAgentDefaults.permissionMode,
+        sessionMetadata?.currentOperatingModeCode,
+    ]);
     
     // Check if this is a Codex session - check both metadata.flavor and tool name prefix
     const isCodex = metadata?.flavor === 'codex' || toolName.startsWith('Codex');
@@ -149,6 +164,41 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, 
     const isApproved = permission.status === 'approved';
     const isDenied = permission.status === 'denied';
     const isPending = permission.status === 'pending';
+    const shouldAutoApproveCodexForSession = isCodex
+        && isPending
+        && effectivePermissionMode?.key === 'full';
+    const shouldHideCodexPermissionFooter = shouldAutoApproveCodexForSession
+        && autoApproveFailedPermissionId !== permission.id;
+
+    useEffect(() => {
+        if (!shouldAutoApproveCodexForSession) {
+            if (!isPending || autoApprovedPermissionIdRef.current === permission.id) {
+                autoApprovedPermissionIdRef.current = null;
+            }
+            return;
+        }
+        if (autoApproveFailedPermissionId === permission.id) {
+            return;
+        }
+        if (autoApprovedPermissionIdRef.current === permission.id) {
+            return;
+        }
+
+        autoApprovedPermissionIdRef.current = permission.id;
+        setLoadingForSession(true);
+
+        void (async () => {
+            try {
+                await sessionAllow(sessionId, permission.id, undefined, undefined, 'approved_for_session');
+            } catch (error) {
+                autoApprovedPermissionIdRef.current = null;
+                setAutoApproveFailedPermissionId(permission.id);
+                console.error('Failed to auto-approve Codex permission for session:', error);
+            } finally {
+                setLoadingForSession(false);
+            }
+        })();
+    }, [autoApproveFailedPermissionId, isPending, permission.id, sessionId, shouldAutoApproveCodexForSession]);
 
     // Helper function to check if tool matches allowed pattern
     const isToolAllowed = (toolName: string, toolInput: any, allowedTools: string[] | undefined): boolean => {
@@ -281,6 +331,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, 
 
     // Render Codex buttons if this is a Codex session
     if (isCodex) {
+        if (shouldHideCodexPermissionFooter) {
+            return null;
+        }
+
         return (
             <View style={styles.container}>
                 <View style={styles.buttonContainer}>

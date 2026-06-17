@@ -101,4 +101,32 @@ describe('codex fork ops', () => {
             }),
         );
     });
+
+    it('lists external Codex project sessions through machine RPC', async () => {
+        machineRPC.mockResolvedValue({
+            type: 'success',
+            sessions: [
+                { codexThreadId: 'thread-1', title: 'Fix sidebar', updatedAt: 1_718_506_800_000, previewText: 'Fix sidebar' },
+            ],
+        });
+
+        const { listCodexProjectSessions } = await import('./ops');
+        const result = await listCodexProjectSessions({
+            machineId: 'machine-1',
+            directory: '/tmp/project',
+            importedThreadIds: ['thread-2'],
+        });
+
+        expect(result).toEqual({
+            type: 'success',
+            sessions: [
+                { codexThreadId: 'thread-1', title: 'Fix sidebar', updatedAt: 1_718_506_800_000, previewText: 'Fix sidebar' },
+            ],
+        });
+        expect(machineRPC).toHaveBeenCalledWith(
+            'machine-1',
+            'codex-list-project-sessions',
+            { directory: '/tmp/project', importedThreadIds: ['thread-2'] },
+        );
+    });
 });

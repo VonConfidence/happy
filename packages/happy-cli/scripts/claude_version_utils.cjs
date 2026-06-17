@@ -32,18 +32,100 @@ function resolvePathSafe(filePath) {
     }
 }
 
+function isNativeUnixBinaryHeader(buffer) {
+    if (!buffer || buffer.length < 4) return false;
+
+    // ELF
+    if (buffer[0] === 0x7f && buffer[1] === 0x45 && buffer[2] === 0x4c && buffer[3] === 0x46) {
+        return true;
+    }
+
+    const magic = buffer.subarray(0, 4).toString('hex');
+    // Mach-O 32/64-bit, fat/universal, both endian orders we might see.
+    return [
+        'feedface',
+        'cefaedfe',
+        'feedfacf',
+        'cffaedfe',
+        'cafebabe',
+        'bebafeca',
+        'cafed00d',
+        '0dd0feca',
+    ].includes(magic);
+}
+
+function findClaudePackageDir(filePath) {
+    if (!filePath) return null;
+
+    let current = path.dirname(filePath);
+    for (let i = 0; i < 6; i++) {
+        const pkgJsonPath = path.join(current, 'package.json');
+        if (fs.existsSync(pkgJsonPath)) {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+                if (pkg.name === '@anthropic-ai/claude-code') {
+                    return current;
+                }
+            } catch (e) {
+                // Ignore malformed package metadata while walking upward.
+            }
+        }
+        const parent = path.dirname(current);
+        if (parent === current) break;
+        current = parent;
+    }
+
+    return null;
+}
+
 /**
  * Resolve the Claude Code entrypoint inside a package directory.
  *
  * Prior to @anthropic-ai/claude-code@2.1.113 the package shipped a JS
- * entrypoint (`cli.js`) at the root. Starting with 2.1.113 the package
- * ships a platform-specific native binary declared in package.json `bin`
- * (e.g. `bin/claude.exe` on Windows, `bin/claude` elsewhere) and no
- * longer contains `cli.js`.
+ * entrypoint (`cli.js`) at the root. Newer npm wrapper releases always
+ * declare `bin/claude.exe`; postinstall replaces that placeholder with the
+ * current platform's native binary. If postinstall did not run or optional
+ * deps were skipped, `bin/claude.exe` stays a Windows PE placeholder and must
+ * be launched through `cli-wrapper.cjs` instead.
  *
  * @param {string} pkgDir - Path to the @anthropic-ai/claude-code directory
  * @returns {string|null} Path to the entrypoint, or null if not resolvable
  */
+function shouldUseClaudeCliWrapper(pkgDir, binPath) {
+    const wrapperPath = path.join(pkgDir, 'cli-wrapper.cjs');
+    if (!fs.existsSync(wrapperPath)) {
+        return false;
+    }
+
+    // On Unix, the npm wrapper always points package.json#bin at
+    // `bin/claude.exe`. After a successful postinstall that path contains a
+    // real Mach-O/ELF binary; otherwise it is a text stub or Windows payload
+    // that fails with "Unknown system error -8" / ENOEXEC when spawned.
+    if (process.platform !== 'win32' && path.extname(binPath).toLowerCase() === '.exe') {
+        let fd;
+        try {
+            const buffer = Buffer.alloc(8);
+            fd = fs.openSync(binPath, 'r');
+            fs.readSync(fd, buffer, 0, buffer.length, 0);
+            const asciiPrefix = buffer.subarray(0, 2).toString('ascii');
+            if (asciiPrefix === 'MZ') {
+                return true;
+            }
+            if (!isNativeUnixBinaryHeader(buffer)) {
+                return true;
+            }
+        } catch (e) {
+            // Fall through to the direct bin path if we cannot inspect it.
+        } finally {
+            if (fd !== undefined) {
+                try { fs.closeSync(fd); } catch (e) {}
+            }
+        }
+    }
+
+    return false;
+}
+
 function resolveClaudeEntrypoint(pkgDir) {
     // Legacy: cli.js at package root (< 2.1.113)
     const legacyCliPath = path.join(pkgDir, 'cli.js');
@@ -62,12 +144,24 @@ function resolveClaudeEntrypoint(pkgDir) {
         if (!binRel) return null;
         const binPath = path.join(pkgDir, binRel);
         if (fs.existsSync(binPath)) {
+            if (shouldUseClaudeCliWrapper(pkgDir, binPath)) {
+                return path.join(pkgDir, 'cli-wrapper.cjs');
+            }
             return binPath;
         }
     } catch (e) {
         // Malformed package.json — treat as not found
     }
     return null;
+}
+
+function normalizeClaudeResolvedPath(filePath) {
+    const pkgDir = findClaudePackageDir(filePath);
+    if (!pkgDir) {
+        return filePath;
+    }
+
+    return resolveClaudeEntrypoint(pkgDir) || filePath;
 }
 
 /**
@@ -110,10 +204,12 @@ function findClaudeInPath() {
         const resolvedPath = resolvePathSafe(claudePath) || claudePath;
 
         if (resolvedPath) {
+            const normalizedPath = normalizeClaudeResolvedPath(resolvedPath);
+
             // On Windows, npm creates shell script shims (no extension) for global packages.
             // These cannot be spawned directly by Node.js. When we find such a shim,
             // resolve to the actual cli.js in the adjacent node_modules directory.
-            const isExecutable = resolvedPath.endsWith('.js') || resolvedPath.endsWith('.cjs') || resolvedPath.endsWith('.exe');
+            const isExecutable = normalizedPath.endsWith('.js') || normalizedPath.endsWith('.cjs') || normalizedPath.endsWith('.exe');
             if (!isExecutable) {
                 const shimDir = path.dirname(claudePath);
                 const pkgDir = path.join(shimDir, 'node_modules', '@anthropic-ai', 'claude-code');
@@ -129,14 +225,14 @@ function findClaudeInPath() {
             // Original path tells us HOW user accessed it (context)
             // Resolved path tells us WHERE it actually lives (content)
             const originalSource = detectSourceFromPath(claudePath);
-            const resolvedSource = detectSourceFromPath(resolvedPath);
+            const resolvedSource = detectSourceFromPath(normalizedPath);
 
             // Prioritize original PATH entry for context (e.g., bun vs npm access)
             // Fall back to resolved path for accurate location detection
             const source = originalSource !== 'PATH' ? originalSource : resolvedSource;
 
             return {
-                path: resolvedPath,
+                path: normalizedPath,
                 source: source
             };
         }
@@ -607,6 +703,9 @@ function runClaudeCli(cliPath) {
 }
 
 module.exports = {
+    findClaudePackageDir,
+    normalizeClaudeResolvedPath,
+    resolveClaudeEntrypoint,
     findGlobalClaudeCliPath,
     findClaudeInPath,
     detectSourceFromPath,
@@ -619,4 +718,3 @@ module.exports = {
     getClaudeCliPath,
     runClaudeCli
 };
-

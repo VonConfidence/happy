@@ -26,6 +26,7 @@ interface SessionActionsPopoverProps {
     onAfterArchive?: () => void;
     onAfterDelete?: () => void;
     onClose: () => void;
+    onRename?: () => void;
     sessionId: string;
     visible: boolean;
 }
@@ -108,6 +109,7 @@ export function SessionActionsPopover({
     onAfterArchive,
     onAfterDelete,
     onClose,
+    onRename,
     sessionId,
     visible,
 }: SessionActionsPopoverProps) {
@@ -119,6 +121,7 @@ export function SessionActionsPopover({
     const { actionItems: actions } = useSessionQuickActions(session!, {
         onAfterArchive,
         onAfterDelete,
+        onRename,
     });
 
     const position = React.useMemo(() => {

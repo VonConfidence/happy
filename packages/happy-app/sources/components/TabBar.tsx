@@ -16,6 +16,10 @@ interface TabBarProps {
     inboxBadgeCount?: number;
 }
 
+const TAB_HIDDEN_CONFIG: Partial<Record<TabType, boolean>> = {
+    inbox: true,
+};
+
 const styles = StyleSheet.create((theme) => ({
     outerContainer: {
         backgroundColor: theme.colors.surface,
@@ -97,7 +101,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }
     return (
         <View style={[styles.outerContainer, { paddingBottom: insets.bottom }]}>
             <View style={styles.innerContainer}>
-                {tabs.map((tab) => {
+                {tabs.filter((tab) => !TAB_HIDDEN_CONFIG[tab.key]).map((tab) => {
                     const isActive = activeTab === tab.key;
                     
                     return (

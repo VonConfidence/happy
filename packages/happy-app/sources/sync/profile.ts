@@ -7,16 +7,16 @@ import * as z from 'zod';
 export const GitHubProfileSchema = z.object({
     id: z.number(),
     login: z.string(),
-    name: z.string(),
-    avatar_url: z.string(),
-    email: z.string().optional(),
-    bio: z.string().nullable()
+    name: z.string().nullish().transform((value) => value ?? null),
+    avatar_url: z.string().nullish().transform((value) => value ?? null),
+    email: z.string().nullish().transform((value) => value ?? null),
+    bio: z.string().nullish().transform((value) => value ?? null)
 });
 
 export const ImageRefSchema = z.object({
-    width: z.number(),
-    height: z.number(),
-    thumbhash: z.string(),
+    width: z.number().nullish().transform((value) => value ?? undefined),
+    height: z.number().nullish().transform((value) => value ?? undefined),
+    thumbhash: z.string().nullish().transform((value) => value ?? undefined),
     path: z.string(),
     url: z.string()
 });
@@ -26,8 +26,8 @@ export const ProfileSchema = z.object({
     timestamp: z.number(),
     firstName: z.string().nullable(),
     lastName: z.string().nullable(),
-    avatar: ImageRefSchema.nullable(),
-    github: GitHubProfileSchema.nullable(),
+    avatar: ImageRefSchema.nullable().catch(null),
+    github: GitHubProfileSchema.nullable().catch(null),
     connectedServices: z.array(z.string()).default([])
 });
 

@@ -36,7 +36,11 @@ import { useAllMachines, useLocalSetting, useSessions, useSetting, storage } fro
 import type { NewSessionAgentType } from '@/sync/persistence';
 import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/machineUtils';
-import { machineSpawnNewSession } from '@/sync/ops';
+import {
+    listCodexProjectSessions,
+    machineSpawnNewSession,
+    type CodexProjectSessionSummary,
+} from '@/sync/ops';
 import { createWorktree, listWorktrees } from '@/utils/worktree';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
@@ -59,6 +63,7 @@ import { isRunningOnMac } from '@/utils/platform';
 import { getNewSessionSidebarLayout } from '@/utils/newSessionSidebarLayout';
 import { getAgentPickerItems, getModePickerItems } from '@/utils/newSessionPickerItems';
 import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { buildExternalCodexSectionState } from '@/utils/externalCodexSessions';
 
 // Agent icon assets
 const agentIcons = {
@@ -601,6 +606,10 @@ function NewSessionScreen() {
     const [effortIndex, setEffortIndex] = React.useState(0);
     const [isSpawning, setIsSpawning] = React.useState(false);
     const [activePicker, setActivePicker] = React.useState<PickerType | null>(null);
+    const [externalCodexSessions, setExternalCodexSessions] = React.useState<CodexProjectSessionSummary[]>([]);
+    const [hasLoadedExternalCodexSessions, setHasLoadedExternalCodexSessions] = React.useState(false);
+    const [isRefreshingExternalCodex, setIsRefreshingExternalCodex] = React.useState(false);
+    const [importingCodexThreadId, setImportingCodexThreadId] = React.useState<string | null>(null);
 
     // Config collapse — auto-collapses when typing, expands when empty
     const [isConfigExpanded, setIsConfigExpanded] = React.useState(true);
@@ -679,6 +688,30 @@ function NewSessionScreen() {
 
         return () => clearTimeout(timeout);
     }, [resolvedSelectedPath]);
+
+    React.useEffect(() => {
+        setExternalCodexSessions([]);
+        setHasLoadedExternalCodexSessions(false);
+        setImportingCodexThreadId(null);
+    }, [selectedMachineId, resolvedSelectedPath]);
+
+    const importedCodexThreadIds = React.useMemo(() => {
+        if (!selectedMachineId || !sessions) return [];
+        return sessions.flatMap((item) => {
+            if (typeof item === 'string') return [];
+            const session = item as Session;
+            if (session.metadata?.machineId !== selectedMachineId) return [];
+            return session.metadata?.codexThreadId ? [session.metadata.codexThreadId] : [];
+        });
+    }, [selectedMachineId, sessions]);
+
+    const externalCodexSection = React.useMemo(() => buildExternalCodexSectionState({
+        selectedMachineId,
+        isMachineOnline: !!selectedMachine && isMachineOnline(selectedMachine),
+        resolvedSelectedPath,
+        importedThreadIds: importedCodexThreadIds,
+        sessions: externalCodexSessions,
+    }), [externalCodexSessions, importedCodexThreadIds, resolvedSelectedPath, selectedMachine, selectedMachineId]);
 
     // Fetch existing worktrees from the selected machine/path
     const [worktreeItems, setWorktreeItems] = React.useState<PickerItem[]>([]);
@@ -906,6 +939,81 @@ function NewSessionScreen() {
         setSelectedMachineId,
         setWorktreeKey,
     ]);
+
+    const refreshExternalCodexSessions = React.useCallback(async () => {
+        if (!selectedMachineId || !resolvedSelectedPath) {
+            return;
+        }
+
+        setIsRefreshingExternalCodex(true);
+        try {
+            const result = await listCodexProjectSessions({
+                machineId: selectedMachineId,
+                directory: resolvedSelectedPath,
+                importedThreadIds: importedCodexThreadIds,
+            });
+
+            if (result.type === 'success') {
+                setExternalCodexSessions(result.sessions);
+                setHasLoadedExternalCodexSessions(true);
+                return;
+            }
+
+            Modal.alert(t('common.error'), result.errorMessage);
+        } finally {
+            setIsRefreshingExternalCodex(false);
+        }
+    }, [importedCodexThreadIds, resolvedSelectedPath, selectedMachineId]);
+
+    const importExternalCodexSession = React.useCallback(async (externalSession: CodexProjectSessionSummary) => {
+        if (!selectedMachineId || !selectedMachine || !resolvedSelectedPath) {
+            Modal.alert(t('common.error'), 'Please select a machine and project first');
+            return;
+        }
+        if (!isMachineOnline(selectedMachine)) {
+            Modal.alert(t('common.error'), 'Machine is offline');
+            return;
+        }
+
+        const spawnImportedSession = async (approvedNewDirectoryCreation: boolean): Promise<void> => {
+            const result = await machineSpawnNewSession({
+                machineId: selectedMachineId,
+                directory: resolvedSelectedPath,
+                approvedNewDirectoryCreation,
+                agent: 'codex',
+                resumeCodexThreadId: externalSession.codexThreadId,
+            });
+
+            switch (result.type) {
+                case 'success':
+                    await sync.refreshSessions();
+                    router.back();
+                    navigateToSession(result.sessionId);
+                    return;
+                case 'requestToApproveDirectoryCreation': {
+                    const approved = await Modal.confirm(
+                        'Create Directory?',
+                        `The directory '${result.directory}' does not exist. Would you like to create it?`,
+                        { cancelText: t('common.cancel'), confirmText: t('common.create') },
+                    );
+                    if (approved) {
+                        await spawnImportedSession(true);
+                    }
+                    return;
+                }
+                case 'error':
+                    Modal.alert(t('common.error'), result.errorMessage);
+                    return;
+            }
+        };
+
+        setImportingCodexThreadId(externalSession.codexThreadId);
+        try {
+            await spawnImportedSession(false);
+        } finally {
+            setImportingCodexThreadId(null);
+        }
+    }, [navigateToSession, resolvedSelectedPath, router, selectedMachine, selectedMachineId]);
 
     // Spawn session handler
     const handleSend = React.useCallback(async (approvedNewDirectoryCreation: boolean = false) => {
@@ -1143,6 +1251,74 @@ function NewSessionScreen() {
                                 <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
                             </Pressable>
                             {renderActivePickerPopover('path')}
+
+                            <View style={styles.externalCodexSection}>
+                                <View style={styles.externalCodexHeader}>
+                                    <Text style={[styles.externalCodexTitle, { color: theme.colors.textSecondary }]}>
+                                        External Codex sessions
+                                    </Text>
+                                    <Pressable
+                                        onPress={() => void refreshExternalCodexSessions()}
+                                        disabled={!externalCodexSection.canRefresh || isRefreshingExternalCodex}
+                                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                        style={({ pressed }) => [
+                                            styles.externalCodexRefreshButton,
+                                            pressed && styles.configRowPressed,
+                                            (!externalCodexSection.canRefresh || isRefreshingExternalCodex) && styles.externalCodexRefreshButtonDisabled,
+                                        ]}
+                                    >
+                                        {isRefreshingExternalCodex ? (
+                                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                        ) : (
+                                            <Ionicons name="refresh" size={14} color={theme.colors.textSecondary} />
+                                        )}
+                                    </Pressable>
+                                </View>
+
+                                {!externalCodexSection.canRefresh ? (
+                                    <Text style={[styles.externalCodexEmptyText, { color: theme.colors.textSecondary }]}>
+                                        Select an online machine and project path to scan external Codex sessions
+                                    </Text>
+                                ) : externalCodexSection.visibleSessions.length > 0 ? (
+                                    externalCodexSection.visibleSessions.map((session) => (
+                                        <Pressable
+                                            key={session.codexThreadId}
+                                            onPress={() => void importExternalCodexSession(session)}
+                                            style={({ pressed }) => [
+                                                styles.externalCodexRow,
+                                                { borderColor: theme.colors.divider, backgroundColor: theme.colors.header.background },
+                                                pressed && styles.configRowPressed,
+                                            ]}
+                                        >
+                                            <View style={[styles.externalCodexBadge, { backgroundColor: theme.colors.button.primary.disabled }]}>
+                                                <Text style={[styles.externalCodexBadgeText, { color: theme.colors.textSecondary }]}>
+                                                    Codex
+                                                </Text>
+                                            </View>
+                                            <View style={styles.externalCodexBody}>
+                                                <Text style={[styles.externalCodexRowTitle, { color: theme.colors.text }]} numberOfLines={1}>
+                                                    {session.title}
+                                                </Text>
+                                                <Text style={[styles.externalCodexRowSubtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+                                                    {formatLastSeen(session.updatedAt, false)}
+                                                    {session.previewText ? ` · ${session.previewText}` : ` · ${session.codexThreadId}`}
+                                                </Text>
+                                            </View>
+                                            {importingCodexThreadId === session.codexThreadId ? (
+                                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                            ) : (
+                                                <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />
+                                            )}
+                                        </Pressable>
+                                    ))
+                                ) : (
+                                    <Text style={[styles.externalCodexEmptyText, { color: theme.colors.textSecondary }]}>
+                                        {hasLoadedExternalCodexSessions
+                                            ? 'No external Codex sessions found for this project'
+                                            : 'Tap refresh to load existing Codex sessions for this project'}
+                                    </Text>
+                                )}
+                            </View>
 
                             <View style={styles.configRow}>
                                 <Pressable
@@ -1741,6 +1917,68 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         borderRadius: 12,
+    },
+    externalCodexSection: {
+        gap: 8,
+        paddingHorizontal: 12,
+        paddingTop: 6,
+        paddingBottom: 10,
+    },
+    externalCodexHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    externalCodexTitle: {
+        fontSize: 12,
+        ...Typography.default('semiBold'),
+    },
+    externalCodexRefreshButton: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    externalCodexRefreshButtonDisabled: {
+        opacity: 0.35,
+    },
+    externalCodexEmptyText: {
+        fontSize: 12,
+        lineHeight: 18,
+        ...Typography.default(),
+    },
+    externalCodexRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+    },
+    externalCodexBadge: {
+        paddingHorizontal: 7,
+        paddingVertical: 4,
+        borderRadius: 999,
+        flexShrink: 0,
+    },
+    externalCodexBadgeText: {
+        fontSize: 11,
+        ...Typography.default('semiBold'),
+    },
+    externalCodexBody: {
+        flex: 1,
+        minWidth: 0,
+    },
+    externalCodexRowTitle: {
+        fontSize: 13,
+        ...Typography.default('semiBold'),
+    },
+    externalCodexRowSubtitle: {
+        marginTop: 2,
+        fontSize: 12,
+        ...Typography.default(),
     },
     offlineHelpTitle: {
         fontSize: 13,

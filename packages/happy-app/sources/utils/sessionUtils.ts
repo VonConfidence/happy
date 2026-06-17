@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Session } from '@/sync/storageTypes';
 import { t } from '@/text';
+import { useSetting } from '@/sync/storage';
+import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { getAvailablePermissionModes, resolveCurrentOption } from '@/components/modelModeOptions';
 import { buildResumeCommand, buildResumeCommandBlock, ResumeCommandBlock } from './resumeCommand';
 
 export type SessionState = 'disconnected' | 'thinking' | 'waiting' | 'permission_required';
@@ -22,6 +25,18 @@ export interface SessionStatus {
 export function useSessionStatus(session: Session): SessionStatus {
     const isOnline = session.presence === "online";
     const hasPermissions = (session.agentState?.requests && Object.keys(session.agentState.requests).length > 0 ? true : false);
+    const agentDefaultOverrides = useSetting('agentDefaultOverrides');
+    const flavor = session.metadata?.flavor;
+    const availableModes = getAvailablePermissionModes(flavor, session.metadata, t);
+    const effectiveAgentDefaults = resolveAgentDefaultConfig(agentDefaultOverrides, flavor);
+    const effectivePermissionMode = resolveCurrentOption(availableModes, [
+        session.permissionMode,
+        effectiveAgentDefaults.permissionMode,
+        session.metadata?.currentOperatingModeCode,
+    ]);
+    const isAutoApprovingCodexPermission = hasPermissions
+        && flavor === 'codex'
+        && effectivePermissionMode?.key === 'full';
 
     const vibingMessage = React.useMemo(() => {
         return vibingMessages[Math.floor(Math.random() * vibingMessages.length)].toLowerCase() + '…';
@@ -43,7 +58,9 @@ export function useSessionStatus(session: Session): SessionStatus {
         return {
             state: 'permission_required',
             isConnected: true,
-            statusText: t('status.permissionRequired'),
+            statusText: isAutoApprovingCodexPermission
+                ? t('status.autoApprovingPermission')
+                : t('status.permissionRequired'),
             shouldShowStatus: true,
             statusColor: '#FF9500',
             statusDotColor: '#FF9500',

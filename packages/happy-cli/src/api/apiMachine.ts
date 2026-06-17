@@ -23,6 +23,7 @@ import {
     ForkSourceMissingError,
 } from '@/claude/utils/claudeSessionFork';
 import { CodexAppServerClient } from '@/codex/codexAppServerClient';
+import { listProjectSessions } from '@/codex/listProjectSessions';
 import {
     CodexForkRewindPointNotFoundError,
     forkCodexThread,
@@ -292,6 +293,23 @@ export class ApiMachineClient {
                     points: listCodexRewindPoints(thread),
                 };
             });
+        });
+
+        this.rpcHandlerManager.registerHandler('codex-list-project-sessions', async (params: any) => {
+            const directory = requireNonEmptyString(params?.directory, 'directory');
+            const importedThreadIds: Set<string> = Array.isArray(params?.importedThreadIds)
+                ? new Set(params.importedThreadIds.filter((value: unknown): value is string => typeof value === 'string' && value.length > 0))
+                : new Set<string>();
+
+            const sessions = await listProjectSessions({
+                directory,
+                importedThreadIds,
+            });
+
+            return {
+                type: 'success',
+                sessions,
+            };
         });
 
         this.rpcHandlerManager.registerHandler('codex-duplicate-thread', async (params: any) => {

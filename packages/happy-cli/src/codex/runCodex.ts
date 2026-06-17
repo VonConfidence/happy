@@ -709,6 +709,10 @@ export async function runCodex(opts: {
         logger.debug('[codex]: client.connect done');
 
         if (opts.resumeThreadId) {
+            const resumeExecutionPolicy = resolveCodexExecutionPolicy(
+                currentPermissionMode ?? DEFAULT_CODEX_PERMISSION_MODE,
+                client.sandboxEnabled,
+            );
             await resumeExistingThread({
                 client,
                 session,
@@ -716,6 +720,8 @@ export async function runCodex(opts: {
                 threadId: opts.resumeThreadId,
                 cwd: process.cwd(),
                 mcpServers,
+                approvalPolicy: resumeExecutionPolicy.approvalPolicy,
+                sandbox: resumeExecutionPolicy.sandbox,
             });
             first = false;
             appendSystemPromptInjected = true;
