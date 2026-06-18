@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Message } from '@/sync/typesMessage';
 import { knownTools } from '@/components/tools/knownTools';
 import { t } from '@/text';
+import { getToolEditedFiles } from '@/utils/toolDisplay';
 
 // Display item types for the grouped message list
 export type TextItem = {
@@ -190,6 +191,39 @@ export function groupToolCallsForDisplay(
     return result;
 }
 
+export function expandAgentWorkMessages(messages: Message[]): Message[] {
+    const expanded: Message[] = [];
+
+    const visit = (message: Message) => {
+        if (message.kind === 'tool-call') {
+            const isTaskWrapper = (message.tool.name === 'Task' || message.tool.name === 'Agent')
+                && message.children.length > 0;
+
+            if (!isTaskWrapper) {
+                expanded.push(message);
+            }
+
+            for (const child of message.children) {
+                visit(child);
+            }
+            return;
+        }
+
+        expanded.push(message);
+    };
+
+    for (const message of messages) {
+        visit(message);
+    }
+
+    return expanded.sort((a, b) => {
+        if (a.createdAt !== b.createdAt) {
+            return b.createdAt - a.createdAt;
+        }
+        return b.id.localeCompare(a.id);
+    });
+}
+
 function getTurnAssignments(messages: Message[]): number[] {
     // Newest-first → turn 0 is the current assistant turn.
     const turnOf = new Array<number>(messages.length);
@@ -344,17 +378,27 @@ const TOOL_CATEGORIES: Record<string, string> = {
 /** Generate a human-readable summary of tools in a group */
 export function generateGroupSummary(messages: Message[]): string {
     const counts: Record<string, number> = {};
+    const editedFiles = new Set<string>();
 
     for (const msg of messages) {
         if (msg.kind === 'tool-call') {
             const category = TOOL_CATEGORIES[msg.tool.name] || 'other';
+            if (category === 'edit') {
+                const files = getToolEditedFiles(msg.tool);
+                if (files.length > 0) {
+                    for (const file of files) {
+                        editedFiles.add(file);
+                    }
+                    continue;
+                }
+            }
             counts[category] = (counts[category] || 0) + 1;
         }
     }
 
     const parts: string[] = [];
 
-    if (counts.edit) parts.push(t('toolGroup.editedFiles', { count: counts.edit }));
+    if (editedFiles.size > 0 || counts.edit) parts.push(t('toolGroup.editedFiles', { count: editedFiles.size || counts.edit }));
     if (counts.read) parts.push(t('toolGroup.readFiles', { count: counts.read }));
     if (counts.terminal) parts.push(t('toolGroup.ranCommands', { count: counts.terminal }));
     if (counts.search) parts.push(t('toolGroup.searched', { count: counts.search }));

@@ -31,6 +31,7 @@ import { getCurrentRealtimeSessionId, getVoiceSession } from '@/realtime/Realtim
 import { isMutableTool } from "@/components/tools/knownTools";
 import { DecryptedArtifact } from "./artifactTypes";
 import { FeedItem } from "./feedTypes";
+import { mergeSessionMetadata } from './sessionMetadata';
 
 // Debounce timer for realtimeMode changes
 let realtimeModeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -408,14 +409,21 @@ export const storage = create<StorageState>()((set, get) => {
             sessions.forEach(session => {
                 // Use centralized resolver for consistent state management
                 const presence = resolveSessionOnlineState(session);
+                const existingSession = state.sessions[session.id];
+                const metadata = mergeSessionMetadata(
+                    existingSession?.metadata ?? null,
+                    session.metadata,
+                    existingSession?.metadataVersion ?? 0,
+                    session.metadataVersion,
+                );
 
                 // Preserve explicit local overrides if they exist, or load from
                 // saved data. Missing/null means "no user override"; the UI and
                 // CLI resolve code defaults later.
-                const existingDraft = state.sessions[session.id]?.draft;
+                const existingDraft = existingSession?.draft;
                 const savedDraft = savedDrafts[session.id];
                 const savedPermissionMode = savedPermissionModes[session.id] ?? null;
-                const existingPermissionModeRaw = state.sessions[session.id]?.permissionMode ?? null;
+                const existingPermissionModeRaw = existingSession?.permissionMode ?? null;
                 const existingPermissionMode = existingPermissionModeRaw === 'default' && savedPermissionMode !== 'default'
                     ? null
                     : existingPermissionModeRaw;
@@ -424,16 +432,18 @@ export const storage = create<StorageState>()((set, get) => {
                 // Restore model mode / effort level from MMKV on first load — server
                 // does not sync these, and they used to reset on every app restart (#1028).
                 const savedModelMode = savedModelModes[session.id] ?? null;
-                const existingModelModeRaw = state.sessions[session.id]?.modelMode ?? null;
+                const existingModelModeRaw = existingSession?.modelMode ?? null;
                 const existingModelMode = existingModelModeRaw === 'default' && savedModelMode !== 'default'
                     ? null
                     : existingModelModeRaw;
                 const resolvedModelMode = existingModelMode ?? savedModelMode ?? session.modelMode ?? null;
-                const existingEffortLevel = state.sessions[session.id]?.effortLevel ?? null;
+                const existingEffortLevel = existingSession?.effortLevel ?? null;
                 const resolvedEffortLevel = existingEffortLevel ?? savedEffortLevels[session.id] ?? session.effortLevel ?? null;
 
                 mergedSessions[session.id] = {
                     ...session,
+                    metadata,
+                    metadataVersion: Math.max(existingSession?.metadataVersion ?? 0, session.metadataVersion),
                     presence,
                     draft: existingDraft || savedDraft || session.draft || null,
                     permissionMode: resolvedPermissionMode,

@@ -2377,6 +2377,58 @@ describe('reducer', () => {
             expect(toolMsg?.tool?.result).toBe('success\n'); // Result unchanged
         });
 
+        it('should preserve tool execution metadata from tool-result events', () => {
+            const state = createReducer();
+
+            const toolMessage: NormalizedMessage = {
+                id: 'msg-1',
+                localId: null,
+                createdAt: 1500,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'Bash',
+                    input: { command: 'exit 1' },
+                    description: null,
+                    uuid: 'tool-uuid-1',
+                    parentUUID: null
+                }]
+            };
+
+            const resultMessage: NormalizedMessage = {
+                id: 'msg-2',
+                localId: null,
+                createdAt: 2000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'tool-1',
+                    content: 'command failed',
+                    is_error: true,
+                    status: 'failed',
+                    exitCode: 1,
+                    durationMs: 245,
+                    uuid: 'tool-uuid-2',
+                    parentUUID: null
+                }]
+            };
+
+            reducer(state, [toolMessage, resultMessage]);
+
+            const toolMsgId = state.toolIdToMessageId.get('tool-1');
+            const toolMsg = state.messages.get(toolMsgId!);
+            expect(toolMsg?.tool?.state).toBe('error');
+            expect(toolMsg?.tool?.result).toBe('command failed');
+            expect(toolMsg?.tool?.execution).toEqual({
+                status: 'failed',
+                exitCode: 1,
+                durationMs: 245
+            });
+        });
+
         it('should handle finished tool: completed successfully, then AgentState with denied permission', () => {
             const state = createReducer();
             
@@ -2903,10 +2955,33 @@ describe('reducer', () => {
     });
 
     describe('session protocol lifecycle and subagent sidechains', () => {
-        it('sets hasReadyEvent for ready events without creating visible messages', () => {
+        it('sets hasReadyEvent for ready events and emits a no-file-change summary', () => {
             const state = createReducer();
             const result = reducer(state, [{
                 id: 'ready-1',
+                localId: null,
+                createdAt: 1000,
+                role: 'event',
+                turnId: 'turn-1',
+                content: { type: 'ready' },
+                isSidechain: false
+            }]);
+
+            expect(result.messages).toHaveLength(1);
+            expect(result.messages[0]).toMatchObject({
+                kind: 'agent-event',
+                event: {
+                    type: 'message',
+                    message: '本次对话没有改动过任何文件 #END',
+                },
+            });
+            expect(result.hasReadyEvent).toBe(true);
+        });
+
+        it('does not emit a turn summary for global ready events without turnId', () => {
+            const state = createReducer();
+            const result = reducer(state, [{
+                id: 'ready-global-1',
                 localId: null,
                 createdAt: 1000,
                 role: 'event',
@@ -2916,6 +2991,105 @@ describe('reducer', () => {
 
             expect(result.messages).toHaveLength(0);
             expect(result.hasReadyEvent).toBe(true);
+        });
+
+        it('emits a turn-end summary listing edited files', () => {
+            const state = createReducer();
+            const result = reducer(state, [
+                {
+                    id: 'tool-call-1',
+                    localId: null,
+                    createdAt: 1000,
+                    role: 'agent',
+                    turnId: 'turn-2',
+                    isSidechain: false,
+                    content: [{
+                        type: 'tool-call',
+                        id: 'edit-1',
+                        name: 'Edit',
+                        input: { file_path: '/repo/a.ts' },
+                        description: null,
+                        uuid: 'edit-uuid-1',
+                        parentUUID: null
+                    }]
+                },
+                {
+                    id: 'ready-2',
+                    localId: null,
+                    createdAt: 2000,
+                    role: 'event',
+                    turnId: 'turn-2',
+                    content: { type: 'ready' },
+                    isSidechain: false
+                }
+            ]);
+
+            expect(result.messages).toHaveLength(2);
+            const summary = result.messages.find((message) => message.kind === 'agent-event');
+            expect(summary).toMatchObject({
+                kind: 'agent-event',
+                event: {
+                    type: 'turn-file-summary',
+                    files: [
+                        {
+                            path: '/repo/a.ts',
+                            additions: 0,
+                            deletions: 0,
+                        },
+                    ],
+                },
+            });
+        });
+
+        it('aggregates file stats for a turn-end summary card', () => {
+            const state = createReducer();
+            const result = reducer(state, [
+                {
+                    id: 'tool-call-1',
+                    localId: null,
+                    createdAt: 1000,
+                    role: 'agent',
+                    turnId: 'turn-3',
+                    isSidechain: false,
+                    content: [{
+                        type: 'tool-call',
+                        id: 'edit-2',
+                        name: 'Edit',
+                        input: {
+                            file_path: '/repo/a.ts',
+                            old_string: 'before',
+                            new_string: 'before\nafter',
+                        },
+                        description: null,
+                        uuid: 'edit-uuid-2',
+                        parentUUID: null,
+                    }],
+                },
+                {
+                    id: 'ready-3',
+                    localId: null,
+                    createdAt: 2000,
+                    role: 'event',
+                    turnId: 'turn-3',
+                    content: { type: 'ready' },
+                    isSidechain: false,
+                },
+            ]);
+
+            const summary = result.messages.find((message) => message.kind === 'agent-event');
+            expect(summary).toMatchObject({
+                kind: 'agent-event',
+                event: {
+                    type: 'turn-file-summary',
+                    files: [
+                        {
+                            path: '/repo/a.ts',
+                            additions: 2,
+                            deletions: 1,
+                        },
+                    ],
+                },
+            });
         });
 
         it('hides turn-start lifecycle messages', () => {

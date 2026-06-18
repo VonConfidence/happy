@@ -2,6 +2,7 @@ import { Metadata, TodoItemsSchema } from '@/sync/storageTypes';
 import { ToolCall, Message } from '@/sync/typesMessage';
 import { resolvePath } from '@/utils/pathUtils';
 import { stringifyToolCommand } from '@/utils/toolCommand';
+import { getPatchFiles as getPatchFilesFromToolInput } from '@/utils/toolDisplay';
 import * as z from 'zod';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import React from 'react';
@@ -20,13 +21,7 @@ const ICON_REASONING = (size: number = 24, color: string = '#000') => <Octicons 
 const ICON_QUESTION = (size: number = 24, color: string = '#000') => <Ionicons name="help-circle-outline" size={size} color={color} />;
 
 function getPatchFiles(input: any): string[] {
-    if (input?.changes && typeof input.changes === 'object' && !Array.isArray(input.changes)) {
-        return Object.keys(input.changes);
-    }
-    if (input?.fileChanges && typeof input.fileChanges === 'object' && !Array.isArray(input.fileChanges)) {
-        return Object.keys(input.fileChanges);
-    }
-    return [];
+    return getPatchFilesFromToolInput(input);
 }
 
 const taskLikeTool = {

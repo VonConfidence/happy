@@ -116,6 +116,7 @@ import { createTracer, traceMessages, TracerState } from "./reducerTracer";
 import { AgentState, TodoItem, TodoItemsSchema } from "../storageTypes";
 import { MessageMeta } from "../typesMessageMeta";
 import { parseMessageAsEvent } from "./messageToEvent";
+import { getToolEditedFileChanges } from "@/utils/toolDisplay";
 
 type ReducerMessage = {
     id: string;
@@ -151,6 +152,7 @@ export type ReducerState = {
     messageIds: Map<string, string>; // originalId -> internalId
     messages: Map<string, ReducerMessage>;
     sidechains: Map<string, ReducerMessage[]>;
+    turnEditedFiles: Map<string, Map<string, { path: string; additions: number; deletions: number }>>;
     tracerState: TracerState; // Tracer state for sidechain processing
     latestTodos?: {
         todos: TodoItem[];
@@ -175,9 +177,30 @@ export function createReducer(): ReducerState {
         localIds: new Map(),
         messageIds: new Map(),
         sidechains: new Map(),
+        turnEditedFiles: new Map(),
         tracerState: createTracer()
     }
 };
+
+function buildToolExecutionMetadata(content: {
+    status?: string | null;
+    exitCode?: number | null;
+    durationMs?: number | null;
+}) {
+    if (
+        content.status === undefined &&
+        content.exitCode === undefined &&
+        content.durationMs === undefined
+    ) {
+        return undefined;
+    }
+
+    return {
+        status: content.status ?? null,
+        exitCode: content.exitCode ?? null,
+        durationMs: content.durationMs ?? null,
+    };
+}
 
 const ENABLE_LOGGING = false;
 
@@ -190,6 +213,48 @@ function mergeToolInputs(existingInput: unknown, nextInput: unknown): unknown {
         return { ...nextInput, ...existingInput };
     }
     return nextInput ?? existingInput;
+}
+
+function rememberEditedFiles(state: ReducerState, turnId: string | undefined, tool: Pick<ToolCall, 'name' | 'input'>) {
+    if (!turnId) {
+        return;
+    }
+
+    const files = getToolEditedFileChanges(tool);
+    if (files.length === 0) {
+        return;
+    }
+
+    const existing = state.turnEditedFiles.get(turnId) ?? new Map<string, { path: string; additions: number; deletions: number }>();
+    for (const file of files) {
+        const current = existing.get(file.path);
+        if (current) {
+            current.additions += file.additions;
+            current.deletions += file.deletions;
+            continue;
+        }
+        existing.set(file.path, { ...file });
+    }
+    state.turnEditedFiles.set(turnId, existing);
+}
+
+function buildTurnEndSummary(turnId: string | undefined, state: ReducerState): AgentEvent {
+    const files = turnId ? Array.from(state.turnEditedFiles.get(turnId)?.values() ?? []) : [];
+    if (turnId) {
+        state.turnEditedFiles.delete(turnId);
+    }
+
+    if (files.length === 0) {
+        return {
+            type: 'message',
+            message: '本次对话没有改动过任何文件 #END',
+        };
+    }
+
+    return {
+        type: 'turn-file-summary',
+        files,
+    };
 }
 
 function getSidechainOwner(state: ReducerState, sidechainId: string): ReducerMessage | null {
@@ -272,6 +337,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     let newMessages: Message[] = [];
     let changed: Set<string> = new Set();
     let hasReadyEvent = false;
+    const pendingTurnEndSummaries: Array<Pick<NormalizedMessage, 'id' | 'createdAt' | 'meta' | 'turnId'>> = [];
 
     // First, trace all messages to identify sidechains
     const tracedMessages = traceMessages(state.tracerState, messages);
@@ -306,6 +372,14 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             // Mark as processed to prevent duplication but don't add to messages
             state.messageIds.set(msg.id, msg.id);
             hasReadyEvent = true;
+            if (msg.turnId) {
+                pendingTurnEndSummaries.push({
+                    id: msg.id,
+                    createdAt: msg.createdAt,
+                    meta: msg.meta,
+                    turnId: msg.turnId,
+                });
+            }
             continue;
         }
 
@@ -739,6 +813,10 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                             message.tool.input = mergeToolInputs(message.tool.input, c.input);
                             message.tool.description = c.description;
                             message.tool.startedAt = msg.createdAt;
+                            rememberEditedFiles(state, msg.turnId, {
+                                name: message.tool.name,
+                                input: message.tool.input,
+                            });
                             // If permission was approved and shown as completed (no tool), now it's running
                             if (message.tool.permission?.status === 'approved' && message.tool.state === 'completed') {
                                 message.tool.state = 'running';
@@ -803,6 +881,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                         });
 
                         state.toolIdToMessageId.set(c.id, mid);
+                        rememberEditedFiles(state, msg.turnId, toolCall);
                         changed.add(mid);
 
                     }
@@ -837,6 +916,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     // Update tool state and result
                     message.tool.state = c.is_error ? 'error' : 'completed';
                     message.tool.result = c.content;
+                    message.tool.execution = buildToolExecutionMetadata(c);
                     message.tool.completedAt = msg.createdAt;
 
                     // Update permission data if provided by backend
@@ -981,6 +1061,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     };
                     state.messages.set(mid, toolMsg);
                     existingSidechain.push(toolMsg);
+                    rememberEditedFiles(state, msg.turnId, toolCall);
 
                     // Map sidechain tool separately to avoid overwriting permission mapping
                     state.sidechainToolIdToMessageId.set(c.id, mid);
@@ -994,6 +1075,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                         if (sidechainMessage && sidechainMessage.tool && sidechainMessage.tool.state === 'running') {
                             sidechainMessage.tool.state = c.is_error ? 'error' : 'completed';
                             sidechainMessage.tool.result = c.content;
+                            sidechainMessage.tool.execution = buildToolExecutionMetadata(c);
                             sidechainMessage.tool.completedAt = msg.createdAt;
                             
                             // Update permission data if provided by backend
@@ -1031,6 +1113,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                         if (permissionMessage && permissionMessage.tool && permissionMessage.tool.state === 'running') {
                             permissionMessage.tool.state = c.is_error ? 'error' : 'completed';
                             permissionMessage.tool.result = c.content;
+                            permissionMessage.tool.execution = buildToolExecutionMetadata(c);
                             permissionMessage.tool.completedAt = msg.createdAt;
                             
                             // Update permission data if provided by backend
@@ -1098,6 +1181,21 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             });
             changed.add(mid);
         }
+    }
+
+    for (const turnEnd of pendingTurnEndSummaries) {
+        const mid = allocateId();
+        state.messages.set(mid, {
+            id: mid,
+            realID: turnEnd.id,
+            role: 'agent',
+            createdAt: turnEnd.createdAt,
+            event: buildTurnEndSummary(turnEnd.turnId, state),
+            tool: null,
+            text: null,
+            meta: turnEnd.meta,
+        });
+        changed.add(mid);
     }
 
     //

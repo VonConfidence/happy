@@ -303,6 +303,15 @@ export type Metadata = {
   machineId?: string,
   claudeSessionId?: string, // Claude Code session ID
   codexThreadId?: string, // Codex app-server thread ID
+  codexTurnContext?: {
+    cwd?: string,
+    currentDate?: string,
+    timezone?: string,
+    approvalPolicy?: string,
+    sandboxPolicy?: unknown,
+    model?: string,
+    reasoningEffort?: string,
+  },
   importedFromExternalCodex?: boolean,
   tools?: string[],
   slashCommands?: string[],

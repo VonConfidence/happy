@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import {
     AgentWorkGroupItem,
+    expandAgentWorkMessages,
     ToolGroupItem,
     ToolDisplayItem,
     formatWorkDuration,
@@ -15,8 +16,8 @@ import { Metadata } from '@/sync/storageTypes';
 import { layout } from './layout';
 import { useElapsedTime } from '@/hooks/useElapsedTime';
 import { t } from '@/text';
-import { Message, ToolCallMessage } from '@/sync/typesMessage';
-import { getToolSummaryCategory, getToolSummaryDetail, ToolSummaryCategory } from '@/utils/toolDisplay';
+import { Message } from '@/sync/typesMessage';
+import { getToolEditedFiles, getToolSummaryCategory, getToolSummaryDetail, ToolSummaryCategory } from '@/utils/toolDisplay';
 import { useRouter } from 'expo-router';
 import { formatMCPTitle } from './tools/views/MCPToolView';
 
@@ -44,23 +45,38 @@ export const ToolGroupView = React.memo<ToolGroupViewProps>((props) => {
             onToggle();
             return;
         }
-        const filePath = isFileEditTool(singleToolMessage.tool.name) && typeof singleToolMessage.tool.input?.file_path === 'string'
-            ? singleToolMessage.tool.input.file_path
-            : null;
+        const filePath = getToolEditedFiles(singleToolMessage.tool)[0] ?? null;
         if (filePath) {
             router.push(`/session/${sessionId}/file?path=${btoa(filePath)}`);
             return;
         }
         router.push(`/session/${sessionId}/message/${singleToolMessage.id}`);
     }, [onToggle, router, sessionId, singleToolMessage]);
-    const renderGroupMessage = React.useCallback((msg: Message) => (
-        <ToolGroupMessageRow
-            key={msg.id}
-            message={msg}
-            metadata={metadata}
-            sessionId={sessionId}
-        />
-    ), [metadata, sessionId]);
+    const groupRows = React.useMemo(() => buildToolGroupRows(group.messages), [group.messages]);
+    const renderGroupRow = React.useCallback((row: ToolGroupRow) => {
+        if (row.type === 'message') {
+            return (
+                <ToolGroupMessageRow
+                    key={row.message.id}
+                    message={row.message}
+                    metadata={metadata}
+                    sessionId={sessionId}
+                />
+            );
+        }
+
+        return (
+            <ToolSummaryEntryRow
+                key={row.key}
+                sessionId={sessionId}
+                category={row.category}
+                title={row.title}
+                detail={row.detail}
+                messageId={row.messageId}
+                filePath={row.filePath}
+            />
+        );
+    }, [metadata, sessionId]);
 
     const body = (
         <View style={nested ? styles.nestedInnerContainer : styles.innerContainer}>
@@ -74,7 +90,7 @@ export const ToolGroupView = React.memo<ToolGroupViewProps>((props) => {
             />
             {expanded && !suppressChildren && (
                 <View style={styles.content}>
-                    {group.messages.map(renderGroupMessage)}
+                    {groupRows.map(renderGroupRow)}
                 </View>
             )}
         </View>
@@ -95,6 +111,71 @@ export const ToolGroupView = React.memo<ToolGroupViewProps>((props) => {
     );
 });
 
+type ToolGroupRow =
+    | { type: 'message'; message: Message }
+    | {
+        type: 'summary';
+        key: string;
+        category: ToolSummaryCategory;
+        title: string;
+        detail: string | null;
+        messageId: string;
+        filePath?: string;
+    };
+
+function buildToolGroupRows(messages: Message[]): ToolGroupRow[] {
+    const rows: ToolGroupRow[] = [];
+    const seenEditedFiles = new Set<string>();
+
+    for (const message of messages) {
+        if (message.kind !== 'tool-call') {
+            rows.push({ type: 'message', message });
+            continue;
+        }
+
+        const shouldRenderFullTool = message.tool.permission?.status === 'pending'
+            || message.tool.name === 'AskUserQuestion';
+        if (shouldRenderFullTool) {
+            rows.push({ type: 'message', message });
+            continue;
+        }
+
+        const category = getToolSummaryCategory(message.tool.name);
+        if (category === 'edit') {
+            const editedFiles = getToolEditedFiles(message.tool);
+            if (editedFiles.length > 0) {
+                for (const filePath of editedFiles) {
+                    if (seenEditedFiles.has(filePath)) {
+                        continue;
+                    }
+                    seenEditedFiles.add(filePath);
+                    rows.push({
+                        type: 'summary',
+                        key: `${message.id}:${filePath}`,
+                        category,
+                        title: t('toolGroup.editedFile'),
+                        detail: filePath,
+                        messageId: message.id,
+                        filePath,
+                    });
+                }
+                continue;
+            }
+        }
+
+        rows.push({
+            type: 'summary',
+            key: message.id,
+            category,
+            title: getToolRowTitle(category, message.tool.name),
+            detail: getToolSummaryDetail(message.tool),
+            messageId: message.id,
+        });
+    }
+
+    return rows;
+}
+
 interface AgentWorkGroupViewProps {
     group: AgentWorkGroupItem;
     metadata: Metadata | null;
@@ -110,9 +191,13 @@ export const AgentWorkGroupView = React.memo<AgentWorkGroupViewProps>((props) =>
         ? runningElapsedSeconds * 1000
         : group.completedAt - group.startedAt;
     const label = t('toolGroup.workedFor', { duration: formatWorkDuration(durationMs) });
-    const nestedItemsNewestFirst = React.useMemo(
-        () => groupToolCallsForDisplay(group.messages, true, { groupSingleToolCalls: true }),
+    const groupMessagesNewestFirst = React.useMemo(
+        () => expandAgentWorkMessages(group.messages),
         [group.messages],
+    );
+    const nestedItemsNewestFirst = React.useMemo(
+        () => groupToolCallsForDisplay(groupMessagesNewestFirst, true, { groupSingleToolCalls: true }),
+        [groupMessagesNewestFirst],
     );
     const nestedItems = React.useMemo(
         () => [...nestedItemsNewestFirst].reverse(),
@@ -297,47 +382,48 @@ function ToolGroupMessageRow(props: {
     }
 
     return (
-        <ToolSummaryRow
-            message={props.message}
+        <ToolSummaryEntryRow
             sessionId={props.sessionId}
+            category={getToolSummaryCategory(props.message.tool.name)}
+            title={getToolRowTitle(getToolSummaryCategory(props.message.tool.name), props.message.tool.name)}
+            detail={getToolSummaryDetail(props.message.tool)}
+            messageId={props.message.id}
+            filePath={getToolEditedFiles(props.message.tool)[0]}
         />
     );
 }
 
-function ToolSummaryRow(props: {
-    message: ToolCallMessage;
+function ToolSummaryEntryRow(props: {
     sessionId: string;
+    category: ToolSummaryCategory;
+    title: string;
+    detail: string | null;
+    messageId: string;
+    filePath?: string;
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const { tool } = props.message;
-    const category = getToolSummaryCategory(tool.name);
-    const detail = getToolSummaryDetail(tool);
-    const title = getToolRowTitle(category, tool.name);
-    const filePath = isFileEditTool(tool.name) && typeof tool.input?.file_path === 'string'
-        ? tool.input.file_path
-        : null;
     const isPressable = Boolean(props.sessionId);
     const handlePress = React.useCallback(() => {
-        if (filePath) {
-            router.push(`/session/${props.sessionId}/file?path=${btoa(filePath)}`);
+        if (props.filePath) {
+            router.push(`/session/${props.sessionId}/file?path=${btoa(props.filePath)}`);
             return;
         }
-        router.push(`/session/${props.sessionId}/message/${props.message.id}`);
-    }, [filePath, props.message.id, props.sessionId, router]);
+        router.push(`/session/${props.sessionId}/message/${props.messageId}`);
+    }, [props.filePath, props.messageId, props.sessionId, router]);
 
     const content = (
         <>
             <View style={styles.toolSummaryIcon}>
-                <ToolSummaryIcon category={category} color={theme.colors.textSecondary} />
+                <ToolSummaryIcon category={props.category} color={theme.colors.textSecondary} />
             </View>
             <Text style={styles.toolSummaryTitle} numberOfLines={1}>
-                {title}
+                {props.title}
             </Text>
-            {detail ? (
+            {props.detail ? (
                 <View style={styles.toolSummaryDetailPill}>
                     <Text style={styles.toolSummaryDetailText} numberOfLines={1}>
-                        {detail}
+                        {props.detail}
                     </Text>
                 </View>
             ) : null}
@@ -421,10 +507,6 @@ function getToolRowTitle(category: ToolSummaryCategory, toolName: string): strin
         default:
             return toolName;
     }
-}
-
-function isFileEditTool(toolName: string): boolean {
-    return toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'Write';
 }
 
 const styles = StyleSheet.create((theme) => ({

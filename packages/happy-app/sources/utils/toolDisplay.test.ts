@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ToolCall } from '@/sync/typesMessage';
 import {
+    getPatchFiles,
     getTerminalToolCommand,
+    getToolEditedFileChanges,
+    getToolEditedFiles,
     getToolSummaryCategory,
     getToolSummaryDetail,
     isTerminalToolName,
@@ -78,5 +81,75 @@ describe('terminal tool display helpers', () => {
         expect(getToolSummaryDetail(tool('MultiEdit', {
             file_path: '/repo/src/app.tsx',
         }))).toBe('/repo/src/app.tsx');
+    });
+
+    it('dedupes edited files across repeated edit calls', () => {
+        expect(getToolEditedFiles(tool('Write', {
+            file_path: '/repo/src/app.tsx',
+        }))).toEqual(['/repo/src/app.tsx']);
+    });
+
+    it('extracts touched files from raw apply_patch input', () => {
+        const patch = [
+            '*** Begin Patch',
+            '*** Update File: packages/happy-cli/a.ts',
+            '@@',
+            '-old',
+            '+new',
+            '*** Update File: packages/happy-cli/a.ts',
+            '@@',
+            '-older',
+            '+newer',
+            '*** Add File: packages/happy-cli/b.ts',
+            '+content',
+            '*** End Patch',
+        ].join('\n');
+
+        expect(getPatchFiles({ patch })).toEqual([
+            'packages/happy-cli/a.ts',
+            'packages/happy-cli/b.ts',
+        ]);
+        expect(getToolSummaryDetail(tool('CodexPatch', { patch }))).toBe('packages/happy-cli/a.ts +1');
+    });
+
+    it('extracts per-file stats from Edit tools', () => {
+        expect(getToolEditedFileChanges(tool('Edit', {
+            file_path: '/repo/a.ts',
+            old_string: 'before',
+            new_string: 'before\nafter',
+        }))).toEqual([
+            {
+                path: '/repo/a.ts',
+                additions: 2,
+                deletions: 1,
+            },
+        ]);
+    });
+
+    it('extracts per-file stats from raw apply_patch input', () => {
+        const patch = [
+            '*** Begin Patch',
+            '*** Update File: packages/happy-cli/a.ts',
+            '@@',
+            '-old line',
+            '+new line',
+            '*** Add File: packages/happy-cli/b.ts',
+            '+first',
+            '+second',
+            '*** End Patch',
+        ].join('\n');
+
+        expect(getToolEditedFileChanges(tool('CodexPatch', { patch }))).toEqual([
+            {
+                path: 'packages/happy-cli/a.ts',
+                additions: 1,
+                deletions: 1,
+            },
+            {
+                path: 'packages/happy-cli/b.ts',
+                additions: 2,
+                deletions: 0,
+            },
+        ]);
     });
 });

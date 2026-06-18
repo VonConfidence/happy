@@ -93,7 +93,7 @@ const ChatListInternal = React.memo((props: {
     const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(() => {
         const initial = new Set<string>();
         for (const item of displayItems) {
-            if (isCollapsibleDisplayItem(item) && !item.hasPendingPermission) {
+            if (isCollapsibleDisplayItem(item) && shouldDefaultCollapseDisplayItem(item) && !item.hasPendingPermission) {
                 initial.add(item.id);
             }
         }
@@ -133,7 +133,7 @@ const ChatListInternal = React.memo((props: {
                     changed = true;
                     continue;
                 }
-                if (isNewGroup && !item.hasPendingPermission) {
+                if (isNewGroup && shouldDefaultCollapseDisplayItem(item) && !item.hasPendingPermission) {
                     next.add(item.id);
                     changed = true;
                 }
@@ -153,7 +153,7 @@ const ChatListInternal = React.memo((props: {
                 setCollapsedGroups((prev) => {
                     const next = new Set(prev);
                     for (const item of displayItemsRef.current) {
-                        if (isCollapsibleDisplayItem(item) && !item.hasRunning) {
+                        if (isCollapsibleDisplayItem(item) && shouldDefaultCollapseDisplayItem(item) && !item.hasRunning) {
                             next.add(item.id);
                         }
                     }
@@ -180,7 +180,7 @@ const ChatListInternal = React.memo((props: {
             setCollapsedGroups((prev) => {
                 const next = new Set(prev);
                 for (const item of displayItemsRef.current) {
-                    if (isCollapsibleDisplayItem(item)) {
+                    if (isCollapsibleDisplayItem(item) && shouldDefaultCollapseDisplayItem(item)) {
                         next.add(item.id);
                     }
                 }
@@ -353,6 +353,10 @@ const ChatListInternal = React.memo((props: {
 
 function isCollapsibleDisplayItem(item: DisplayItem): item is ToolGroupItem | Extract<DisplayItem, { type: 'agent-work-group' }> {
     return item.type === 'tool-group' || item.type === 'agent-work-group';
+}
+
+function shouldDefaultCollapseDisplayItem(item: ToolGroupItem | Extract<DisplayItem, { type: 'agent-work-group' }>): boolean {
+    return item.type === 'tool-group';
 }
 
 const styles = StyleSheet.create((theme) => ({

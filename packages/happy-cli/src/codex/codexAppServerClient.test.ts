@@ -912,6 +912,62 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
+    it('maps approved_for_session to acceptForSession for v2 approvals', async () => {
+        const requests: MockRpcMessage[] = [];
+        const proc = createMockProcess({
+            pid: 3008,
+            onRequest: (msg, stdout) => {
+                requests.push(msg);
+                if (msg.method === 'thread/start' && msg.id != null) {
+                    setTimeout(() => {
+                        pushJsonLine(stdout, {
+                            id: msg.id,
+                            result: {
+                                thread: { id: 'thread-raw-8', path: '/tmp/thread-raw-8' },
+                                model: 'gpt-test',
+                                modelProvider: 'openai',
+                                cwd: '/tmp/project',
+                                approvalPolicy: 'never',
+                                sandbox: { type: 'dangerFullAccess' },
+                                reasoningEffort: null,
+                            },
+                        });
+                        pushJsonLine(stdout, {
+                            id: 108,
+                            method: 'item/commandExecution/requestApproval',
+                            params: {
+                                threadId: 'thread-raw-8',
+                                turnId: 'turn-raw-8',
+                                itemId: 'exec-approval-1',
+                                command: '/bin/zsh -lc whoami',
+                                cwd: '/tmp/project',
+                                reason: null,
+                            },
+                        });
+                    }, 0);
+                }
+            },
+        });
+
+        mockSpawn.mockImplementation(() => proc);
+
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        client.setApprovalHandler(async () => 'approved_for_session');
+
+        await client.connect();
+        await client.startThread({
+            model: 'gpt-test',
+            cwd: '/tmp/project',
+            approvalPolicy: 'never',
+            sandbox: 'danger-full-access',
+        });
+
+        await waitFor(() => requests.some((msg) => msg.id === 108 && msg.result?.decision === 'acceptForSession'));
+
+        await client.disconnect();
+    });
+
     it('falls back to final answer completion when raw turn/completed is missing', async () => {
         const proc = createMockProcess({
             pid: 3002,

@@ -53,6 +53,20 @@ export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProp
                         </View>
                     )}
 
+                    {tool.execution && (
+                        <View style={styles.section}>
+                            <View style={styles.sectionHeader}>
+                                <Ionicons name="timer-outline" size={20} color="#5856D6" />
+                                <Text style={styles.sectionTitle}>Execution</Text>
+                            </View>
+                            <View style={styles.executionContainer}>
+                                {tool.execution.status ? <Text style={styles.executionText}>status: {tool.execution.status}</Text> : null}
+                                {tool.execution.exitCode !== null && tool.execution.exitCode !== undefined ? <Text style={styles.executionText}>exitCode: {tool.execution.exitCode}</Text> : null}
+                                {tool.execution.durationMs !== null && tool.execution.durationMs !== undefined ? <Text style={styles.executionText}>durationMs: {tool.execution.durationMs}</Text> : null}
+                            </View>
+                        </View>
+                    )}
+
                     {/* Result/Output */}
                     {tool.state === 'completed' && tool.result && (
                         <View style={styles.section}>
@@ -155,6 +169,15 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 14,
         lineHeight: 20,
         color: theme.colors.textSecondary,
+    },
+    executionContainer: {
+        gap: 4,
+    },
+    executionText: {
+        fontSize: 14,
+        lineHeight: 20,
+        color: theme.colors.textSecondary,
+        fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
     },
     toolId: {
         fontSize: 12,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { groupMessagesForDisplay, groupToolCallsForDisplay } from './useGroupedMessages';
+import { expandAgentWorkMessages, generateGroupSummary, groupMessagesForDisplay, groupToolCallsForDisplay } from './useGroupedMessages';
 import { Message, ToolCallMessage } from '@/sync/typesMessage';
 
 vi.mock('@/components/tools/knownTools', () => ({
@@ -285,5 +285,117 @@ describe('useGroupedMessages', () => {
             throw new Error('Expected a tool group');
         }
         expect(items[0].messages.map((message) => message.id)).toEqual(['tool-only']);
+    });
+
+    it('counts unique edited files instead of raw edit tool calls', () => {
+        const messages: Message[] = [
+            {
+                kind: 'tool-call',
+                id: 'edit-2',
+                localId: null,
+                createdAt: 3,
+                tool: {
+                    name: 'Edit',
+                    state: 'completed',
+                    input: { file_path: '/repo/a.ts' },
+                    createdAt: 3,
+                    startedAt: 3,
+                    completedAt: 4,
+                    description: null,
+                },
+                children: [],
+            },
+            {
+                kind: 'tool-call',
+                id: 'edit-1',
+                localId: null,
+                createdAt: 2,
+                tool: {
+                    name: 'Write',
+                    state: 'completed',
+                    input: { file_path: '/repo/a.ts' },
+                    createdAt: 2,
+                    startedAt: 2,
+                    completedAt: 3,
+                    description: null,
+                },
+                children: [],
+            },
+            {
+                kind: 'tool-call',
+                id: 'edit-3',
+                localId: null,
+                createdAt: 1,
+                tool: {
+                    name: 'Edit',
+                    state: 'completed',
+                    input: { file_path: '/repo/b.ts' },
+                    createdAt: 1,
+                    startedAt: 1,
+                    completedAt: 2,
+                    description: null,
+                },
+                children: [],
+            },
+        ];
+
+        expect(generateGroupSummary(messages)).toBe('toolGroup.editedFiles:2');
+    });
+
+    it('expands nested task sidechains into the worked timeline', () => {
+        const childTool: ToolCallMessage = {
+            kind: 'tool-call',
+            id: 'child-read',
+            localId: null,
+            createdAt: 4,
+            tool: {
+                name: 'Read',
+                state: 'completed',
+                input: { file_path: '/repo/a.ts' },
+                createdAt: 4,
+                startedAt: 4,
+                completedAt: 5,
+                description: null,
+            },
+            children: [],
+        };
+        const childText: Message = {
+            kind: 'agent-text',
+            id: 'child-text',
+            localId: null,
+            createdAt: 3,
+            text: 'checking file',
+        };
+        const wrapperTask: ToolCallMessage = {
+            kind: 'tool-call',
+            id: 'task-wrapper',
+            localId: null,
+            createdAt: 2,
+            tool: {
+                name: 'Task',
+                state: 'completed',
+                input: { description: 'Investigate' },
+                createdAt: 2,
+                startedAt: 2,
+                completedAt: 6,
+                description: 'Investigate',
+            },
+            children: [childTool, childText],
+        };
+        const finalText: Message = {
+            kind: 'agent-text',
+            id: 'final-text',
+            localId: null,
+            createdAt: 1,
+            text: 'done',
+        };
+
+        const expanded = expandAgentWorkMessages([finalText, wrapperTask]);
+
+        expect(expanded.map((message) => message.id)).toEqual([
+            'child-read',
+            'child-text',
+            'final-text',
+        ]);
     });
 });

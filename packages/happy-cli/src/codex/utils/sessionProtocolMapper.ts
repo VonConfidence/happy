@@ -12,6 +12,11 @@ export type CodexTurnState = {
     providerSubagentToSessionSubagent?: Map<string, string>;
 };
 
+export type CodexHistoricalSubagentBinding = {
+    prompt: string;
+    sessionSubagent: string;
+};
+
 type CodexMapperResult = {
     currentTurnId: string | null;
     startedSubagents: Set<string>;
@@ -32,6 +37,14 @@ type LegacyToolLikeMessage = {
 };
 
 type TurnEndStatus = 'completed' | 'failed' | 'cancelled';
+
+type HistoricalToolEndDetails = {
+    output?: string | null;
+    isError?: boolean;
+    status?: string | null;
+    exitCode?: number | null;
+    durationMs?: number | null;
+};
 
 function getStartedSubagents(state: CodexTurnState): Set<string> {
     return state.startedSubagents ?? new Set<string>();
@@ -152,20 +165,134 @@ function completedTimestampMs(turn: ThreadTurn): number {
         : Date.now();
 }
 
+type TurnTimeline = {
+    startTime: number;
+    endTime: number;
+    cursor: number;
+};
+
+function createTurnTimeline(turn: ThreadTurn): TurnTimeline {
+    const startTime = turnTimestampMs(turn);
+    const itemCount = turn.items?.length ?? 0;
+    const minimumSlots = 1 + itemCount * 2 + 1; // turn-start + per-item worst-case(start/end) + turn-end
+    const endTime = Math.max(completedTimestampMs(turn), startTime + minimumSlots);
+    return {
+        startTime,
+        endTime,
+        cursor: 0,
+    };
+}
+
+function nextTurnTimelineTime(timeline: TurnTimeline, step: number = 1): number {
+    const time = timeline.startTime + timeline.cursor;
+    timeline.cursor += step;
+    return time;
+}
+
+function pickHistoricalToolArgs(item: ThreadItem): Record<string, unknown> {
+    const record = item as Record<string, unknown>;
+    const candidate = record.arguments ?? record.input ?? record.args;
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        return candidate as Record<string, unknown>;
+    }
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed as Record<string, unknown>;
+            }
+        } catch {
+            return {};
+        }
+    }
+    return {};
+}
+
+function pickHistoricalToolName(item: ThreadItem): string | null {
+    const record = item as Record<string, unknown>;
+    return typeof record.name === 'string' && record.name.trim().length > 0
+        ? record.name.trim()
+        : null;
+}
+
+function pickHistoricalToolCallId(item: ThreadItem): string {
+    const record = item as Record<string, unknown>;
+    const explicit = record.callId ?? record.call_id;
+    return typeof explicit === 'string' && explicit.trim().length > 0
+        ? explicit.trim()
+        : item.id;
+}
+
+function historicalToolTitle(name: string, args: Record<string, unknown>): string {
+    const description = typeof args.description === 'string' && args.description.trim().length > 0
+        ? args.description.trim()
+        : null;
+    const title = typeof args.title === 'string' && args.title.trim().length > 0
+        ? args.title.trim()
+        : null;
+    const prompt = typeof args.prompt === 'string' && args.prompt.trim().length > 0
+        ? args.prompt.trim()
+        : null;
+    return description ?? title ?? prompt ?? name;
+}
+
+function injectHistoricalSessionSubagent(
+    name: string,
+    args: Record<string, unknown>,
+    pendingBindings: Map<string, string[]>,
+): Record<string, unknown> {
+    if (name !== 'Agent' && name !== 'Task') {
+        return args;
+    }
+
+    const prompt = typeof args.prompt === 'string' && args.prompt.trim().length > 0
+        ? args.prompt.trim()
+        : null;
+    if (!prompt) {
+        return args;
+    }
+
+    const matches = pendingBindings.get(prompt);
+    if (!matches || matches.length === 0) {
+        return args;
+    }
+
+    const sessionSubagent = matches.shift();
+    if (!sessionSubagent) {
+        return args;
+    }
+
+    if (matches.length === 0) {
+        pendingBindings.delete(prompt);
+    }
+
+    return {
+        ...args,
+        sessionSubagent,
+    };
+}
+
 function textFromInputItems(items: unknown): string | null {
     if (!Array.isArray(items)) {
         return null;
     }
-    const text = items
-        .filter((item): item is { type: 'text'; text: string } => (
-            Boolean(item)
-            && typeof item === 'object'
-            && (item as { type?: unknown }).type === 'text'
-            && typeof (item as { text?: unknown }).text === 'string'
-        ))
-        .map((item) => item.text)
-        .join('\n')
-        .trim();
+    const text = items.flatMap((item) => {
+        if (!item || typeof item !== 'object') {
+            return [];
+        }
+
+        const record = item as { type?: unknown; text?: unknown; url?: unknown; path?: unknown };
+        if (record.type === 'text' && typeof record.text === 'string') {
+            return [record.text];
+        }
+        if (record.type === 'image' && typeof record.url === 'string' && record.url.length > 0) {
+            return [`[Image: ${record.url}]`];
+        }
+        if (record.type === 'localImage' && typeof record.path === 'string' && record.path.length > 0) {
+            return [`[Local image: ${record.path}]`];
+        }
+        return [];
+    }).join('\n').trim();
     return text.length > 0 ? text : null;
 }
 
@@ -255,13 +382,14 @@ function emitHistoricalToolCall(
     envelopes: SessionEnvelope[],
     turn: ThreadTurn,
     item: ThreadItem,
+    timeline: TurnTimeline,
     name: string,
     title: string,
     args: Record<string, unknown>,
-    output: string | null,
+    endDetails?: HistoricalToolEndDetails,
 ): void {
-    const time = turnTimestampMs(turn);
-    const opts = { turn: turn.id, time, codexItemId: item.id } satisfies CreateEnvelopeOptions;
+    const startTime = nextTurnTimelineTime(timeline);
+    const opts = { turn: turn.id, time: startTime, codexItemId: item.id } satisfies CreateEnvelopeOptions;
     envelopes.push(createEnvelope('agent', {
         t: 'tool-call-start',
         call: item.id,
@@ -274,24 +402,18 @@ function emitHistoricalToolCall(
         id: `${item.id}:start`,
     }));
 
-    if (output && output.trim().length > 0) {
-        envelopes.push(createEnvelope('agent', {
-            t: 'text',
-            text: output,
-            thinking: true,
-        }, {
-            ...opts,
-            id: `${item.id}:output`,
-        }));
-    }
-
     envelopes.push(createEnvelope('agent', {
         t: 'tool-call-end',
         call: item.id,
+        ...(endDetails?.output !== undefined ? { output: endDetails.output } : {}),
+        ...(endDetails?.isError !== undefined ? { isError: endDetails.isError } : {}),
+        ...(endDetails?.status !== undefined ? { status: endDetails.status } : {}),
+        ...(endDetails?.exitCode !== undefined ? { exitCode: endDetails.exitCode } : {}),
+        ...(endDetails?.durationMs !== undefined ? { durationMs: endDetails.durationMs } : {}),
     }, {
         ...opts,
         id: `${item.id}:end`,
-        time: completedTimestampMs(turn),
+        time: nextTurnTimelineTime(timeline),
     }));
 }
 
@@ -373,16 +495,34 @@ function normalizeHistoricalFileChanges(changes: unknown): Record<string, Record
     return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
-export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>): SessionEnvelope[] {
+export function mapCodexThreadToSessionEnvelopes(
+    thread: Pick<Thread, 'turns'>,
+    opts?: {
+        historicalSubagents?: CodexHistoricalSubagentBinding[];
+    },
+): SessionEnvelope[] {
     const envelopes: SessionEnvelope[] = [];
+    const pendingHistoricalSubagents = new Map<string, string[]>();
+    for (const binding of opts?.historicalSubagents ?? []) {
+        const prompt = binding.prompt.trim();
+        if (prompt.length === 0) {
+            continue;
+        }
+
+        const existing = pendingHistoricalSubagents.get(prompt);
+        if (existing) {
+            existing.push(binding.sessionSubagent);
+        } else {
+            pendingHistoricalSubagents.set(prompt, [binding.sessionSubagent]);
+        }
+    }
 
     for (const turn of thread.turns ?? []) {
-        const startedAt = turnTimestampMs(turn);
-        const completedAt = completedTimestampMs(turn);
+        const timeline = createTurnTimeline(turn);
         envelopes.push(createEnvelope('agent', { t: 'turn-start' }, {
             id: `${turn.id}:start`,
             turn: turn.id,
-            time: startedAt,
+            time: nextTurnTimelineTime(timeline),
         }));
 
         for (const item of turn.items ?? []) {
@@ -392,7 +532,7 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                     if (text) {
                         envelopes.push(createEnvelope('user', { t: 'text', text }, {
                             id: item.id,
-                            time: startedAt,
+                            time: nextTurnTimelineTime(timeline),
                             codexItemId: item.id,
                         }));
                     }
@@ -404,7 +544,7 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                         envelopes.push(createEnvelope('agent', { t: 'text', text }, {
                             id: item.id,
                             turn: turn.id,
-                            time: completedAt,
+                            time: nextTurnTimelineTime(timeline),
                             codexItemId: item.id,
                         }));
                     }
@@ -416,7 +556,7 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                         envelopes.push(createEnvelope('agent', { t: 'text', text, thinking: true }, {
                             id: item.id,
                             turn: turn.id,
-                            time: startedAt,
+                            time: nextTurnTimelineTime(timeline),
                             codexItemId: item.id,
                         }));
                     }
@@ -428,10 +568,16 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                         envelopes,
                         turn,
                         item,
+                        timeline,
                         'CodexBash',
                         commandToTitle(command),
                         { command, cwd: item.cwd },
-                        typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : null,
+                        {
+                            output: typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : null,
+                            status: typeof item.status === 'string' ? item.status : null,
+                            exitCode: typeof item.exitCode === 'number' ? item.exitCode : null,
+                            durationMs: typeof item.durationMs === 'number' ? item.durationMs : null,
+                        },
                     );
                     break;
                 }
@@ -442,12 +588,16 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                         envelopes,
                         turn,
                         item,
+                        timeline,
                         'CodexPatch',
                         title,
                         normalizedChanges
                             ? { changes: normalizedChanges, fileChanges: normalizedChanges, status: item.status }
                             : { changes: item.changes, status: item.status },
-                        null,
+                        {
+                            status: typeof item.status === 'string' ? item.status : null,
+                            isError: item.status === 'failed' || item.status === 'declined',
+                        },
                     );
                     break;
                 }
@@ -460,6 +610,7 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                         envelopes,
                         turn,
                         item,
+                        timeline,
                         'McpTool',
                         title,
                         {
@@ -467,7 +618,12 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                             tool: item.tool,
                             arguments: item.arguments,
                         },
-                        output,
+                        {
+                            output,
+                            isError: item.error !== undefined && item.error !== null,
+                            status: typeof item.status === 'string' ? item.status : null,
+                            durationMs: typeof item.durationMs === 'number' ? item.durationMs : null,
+                        },
                     );
                     break;
                 }
@@ -476,13 +632,47 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
                         envelopes,
                         turn,
                         item,
+                        timeline,
                         'WebSearch',
                         webSearchTitle(item),
                         {
                             query: (item as { query?: unknown }).query,
                             action: (item as { action?: unknown }).action,
                         },
-                        null,
+                        undefined,
+                    );
+                    break;
+                }
+                default: {
+                    const name = pickHistoricalToolName(item);
+                    if (!name) {
+                        break;
+                    }
+
+                    const record = item as Record<string, unknown>;
+                    const rawArgs = pickHistoricalToolArgs(item);
+                    const args = injectHistoricalSessionSubagent(name, rawArgs, pendingHistoricalSubagents);
+                    const title = historicalToolTitle(name, args);
+                    const output = record.error !== undefined && record.error !== null
+                        ? String(record.error)
+                        : (record.output !== undefined && record.output !== null
+                            ? String(record.output)
+                            : (record.result !== undefined && record.result !== null ? String(record.result) : null));
+                    emitHistoricalToolCall(
+                        envelopes,
+                        turn,
+                        { ...item, id: pickHistoricalToolCallId(item) },
+                        timeline,
+                        name,
+                        title,
+                        args,
+                        {
+                            output,
+                            isError: record.error !== undefined && record.error !== null,
+                            status: typeof record.status === 'string' ? record.status : null,
+                            exitCode: typeof record.exitCode === 'number' ? record.exitCode : null,
+                            durationMs: typeof record.durationMs === 'number' ? record.durationMs : null,
+                        },
                     );
                     break;
                 }
@@ -492,7 +682,7 @@ export function mapCodexThreadToSessionEnvelopes(thread: Pick<Thread, 'turns'>):
         envelopes.push(createEnvelope('agent', { t: 'turn-end', status: turnStatus(turn) }, {
             id: `${turn.id}:end`,
             turn: turn.id,
-            time: completedAt,
+            time: Math.max(nextTurnTimelineTime(timeline), timeline.endTime),
         }));
     }
 

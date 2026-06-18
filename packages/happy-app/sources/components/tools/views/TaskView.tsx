@@ -6,45 +6,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { ToolCall } from '@/sync/typesMessage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+import { Message } from '@/sync/typesMessage';
 
 interface FilteredTool {
     tool: ToolCall;
     title: string;
     state: 'running' | 'completed' | 'error';
+    depth: number;
 }
 
 export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages }) => {
     const { theme } = useUnistyles();
-    const filtered: FilteredTool[] = [];
-
-    for (let m of messages) {
-        if (m.kind === 'tool-call') {
-            const knownTool = knownTools[m.tool.name as keyof typeof knownTools] as any;
-            
-            // Extract title using extractDescription if available, otherwise use title
-            let title = m.tool.name;
-            if (knownTool) {
-                if ('extractDescription' in knownTool && typeof knownTool.extractDescription === 'function') {
-                    title = knownTool.extractDescription({ tool: m.tool, metadata });
-                } else if (knownTool.title) {
-                    // Handle optional title and function type
-                    if (typeof knownTool.title === 'function') {
-                        title = knownTool.title({ tool: m.tool, metadata });
-                    } else {
-                        title = knownTool.title;
-                    }
-                }
-            }
-
-            if (m.tool.state === 'running' || m.tool.state === 'completed' || m.tool.state === 'error') {
-                filtered.push({
-                    tool: m.tool,
-                    title,
-                    state: m.tool.state
-                });
-            }
-        }
-    }
+    const filtered = collectToolChain(messages, metadata);
 
     const styles = StyleSheet.create({
         container: {
@@ -96,13 +69,16 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages })
         return null;
     }
 
-    const visibleTools = filtered.slice(filtered.length - 3);
-    const remainingCount = filtered.length - 3;
-
     return (
         <View style={styles.container}>
-            {visibleTools.map((item, index) => (
-                <View key={`${item.tool.name}-${index}`} style={styles.toolItem}>
+            {filtered.map((item, index) => (
+                <View
+                    key={`${item.tool.name}-${index}`}
+                    style={[
+                        styles.toolItem,
+                        item.depth > 0 ? { paddingLeft: 4 + item.depth * 14 } : null
+                    ]}
+                >
                     <Text style={styles.toolTitle}>{item.title}</Text>
                     <View style={styles.statusContainer}>
                         {item.state === 'running' && (
@@ -117,13 +93,47 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages })
                     </View>
                 </View>
             ))}
-            {remainingCount > 0 && (
-                <View style={styles.moreToolsItem}>
-                    <Text style={styles.moreToolsText}>
-                        {t('tools.taskView.moreTools', { count: remainingCount })}
-                    </Text>
-                </View>
-            )}
         </View>
     );
 });
+
+function collectToolChain(messages: Message[], metadata: ToolViewProps['metadata'], depth: number = 0): FilteredTool[] {
+    const filtered: FilteredTool[] = [];
+    const toolMessages = messages
+        .filter((message): message is Extract<Message, { kind: 'tool-call' }> => message.kind === 'tool-call')
+        .sort((a, b) => getToolTimestamp(a.tool) - getToolTimestamp(b.tool));
+
+    for (const message of toolMessages) {
+        filtered.push({
+            tool: message.tool,
+            title: getToolTitle(message.tool, metadata),
+            state: message.tool.state,
+            depth,
+        });
+
+        if (message.children.length > 0) {
+            filtered.push(...collectToolChain(message.children, metadata, depth + 1));
+        }
+    }
+
+    return filtered;
+}
+
+function getToolTimestamp(tool: ToolCall) {
+    return tool.completedAt ?? tool.startedAt ?? tool.createdAt;
+}
+
+function getToolTitle(tool: ToolCall, metadata: ToolViewProps['metadata']) {
+    const knownTool = knownTools[tool.name as keyof typeof knownTools] as any;
+    let title = tool.name;
+    if (knownTool) {
+        if ('extractDescription' in knownTool && typeof knownTool.extractDescription === 'function') {
+            title = knownTool.extractDescription({ tool, metadata });
+        } else if (knownTool.title) {
+            title = typeof knownTool.title === 'function'
+                ? knownTool.title({ tool, metadata })
+                : knownTool.title;
+        }
+    }
+    return title;
+}

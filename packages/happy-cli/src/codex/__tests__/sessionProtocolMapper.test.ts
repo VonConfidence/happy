@@ -217,6 +217,72 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         });
     });
 
+    it('preserves intra-turn message ordering with distinct synthetic timestamps', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                completedAt: 100,
+                status: 'completed',
+                items: [
+                    { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'first user' }] },
+                    { id: 'user-2', type: 'userMessage', content: [{ type: 'text', text: 'second user' }] },
+                    { id: 'cmd-1', type: 'commandExecution', command: 'pwd', status: 'completed' },
+                    { id: 'agent-1', type: 'agentMessage', text: 'final answer' },
+                ],
+            }],
+        });
+
+        const timeline = envelopes.map((envelope) => ({
+            id: envelope.id,
+            time: envelope.time,
+            type: envelope.ev.t,
+        }));
+
+        expect(timeline.map((entry) => entry.id)).toEqual([
+            'turn-1:start',
+            'user-1',
+            'user-2',
+            'cmd-1:start',
+            'cmd-1:end',
+            'agent-1',
+            'turn-1:end',
+        ]);
+        expect(new Set(timeline.map((entry) => entry.time)).size).toBe(timeline.length);
+        expect(timeline.every((entry, index) => index === 0 || entry.time > timeline[index - 1]!.time)).toBe(true);
+    });
+
+    it('keeps user image inputs in the historical transcript summary text', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                completedAt: 101,
+                status: 'completed',
+                items: [
+                    {
+                        id: 'user-1',
+                        type: 'userMessage',
+                        content: [
+                            { type: 'text', text: 'inspect this' },
+                            { type: 'image', url: 'https://example.com/image.png' },
+                            { type: 'localImage', path: '/tmp/local.png' },
+                        ],
+                    },
+                ],
+            }],
+        });
+
+        expect(envelopes[1]).toMatchObject({
+            role: 'user',
+            id: 'user-1',
+            ev: {
+                t: 'text',
+                text: 'inspect this\n[Image: https://example.com/image.png]\n[Local image: /tmp/local.png]',
+            },
+        });
+    });
+
     it('backfills Codex command execution items as tool calls', () => {
         const envelopes = mapCodexThreadToSessionEnvelopes({
             turns: [{
@@ -229,6 +295,9 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
                         command: 'pnpm test',
                         cwd: '/tmp/project',
                         aggregatedOutput: 'ok',
+                        exitCode: 0,
+                        durationMs: 25,
+                        status: 'completed',
                     },
                 ],
             }],
@@ -237,7 +306,6 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         expect(envelopes.map((envelope) => envelope.ev.t)).toEqual([
             'turn-start',
             'tool-call-start',
-            'text',
             'tool-call-end',
             'turn-end',
         ]);
@@ -249,12 +317,14 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         expect(envelopes[2]).toMatchObject({
             role: 'agent',
             turn: 'turn-1',
-            ev: { t: 'text', text: 'ok', thinking: true },
-        });
-        expect(envelopes[3]).toMatchObject({
-            role: 'agent',
-            turn: 'turn-1',
-            ev: { t: 'tool-call-end', call: 'cmd-1' },
+            ev: {
+                t: 'tool-call-end',
+                call: 'cmd-1',
+                output: 'ok',
+                status: 'completed',
+                exitCode: 0,
+                durationMs: 25,
+            },
         });
     });
 
@@ -389,5 +459,57 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
                 thinking: true,
             },
         });
+    });
+
+    it('injects sessionSubagent into historical Agent tool calls so child replay can nest', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                items: [
+                    {
+                        id: 'agent-tool-item-1',
+                        type: 'functionCall',
+                        name: 'Agent',
+                        arguments: {
+                            description: 'Inspect translations',
+                            prompt: 'Review all translation files',
+                        },
+                        status: 'completed',
+                        output: 'done',
+                    },
+                ],
+            }],
+        }, {
+            historicalSubagents: [{
+                prompt: 'Review all translation files',
+                sessionSubagent: createId(),
+            }],
+        });
+
+        expect(envelopes.map((envelope) => envelope.ev.t)).toEqual([
+            'turn-start',
+            'tool-call-start',
+            'tool-call-end',
+            'turn-end',
+        ]);
+        expect(envelopes[1]).toMatchObject({
+            role: 'agent',
+            turn: 'turn-1',
+            ev: {
+                t: 'tool-call-start',
+                call: 'agent-tool-item-1',
+                name: 'Agent',
+                args: expect.objectContaining({
+                    description: 'Inspect translations',
+                    prompt: 'Review all translation files',
+                    sessionSubagent: expect.any(String),
+                }),
+            },
+        });
+
+        if (envelopes[1].ev.t === 'tool-call-start') {
+            expect(isCuid(String(envelopes[1].ev.args.sessionSubagent))).toBe(true);
+        }
     });
 });

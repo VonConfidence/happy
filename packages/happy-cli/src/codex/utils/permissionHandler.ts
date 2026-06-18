@@ -91,12 +91,13 @@ export class CodexPermissionHandler extends BasePermissionHandler {
                         createdAt: Date.now(),
                         completedAt: Date.now(),
                         status: 'approved',
-                        decision: 'approved',
+                        decision: 'approved_for_session',
                     },
                 },
             } satisfies AgentState));
 
-            return { decision: 'approved' };
+            // Full mode semantically matches "yes, and don't ask again for this session".
+            return { decision: 'approved_for_session' };
         }
 
         if (this.shouldAutoApprove(toolName, toolCallId)) {

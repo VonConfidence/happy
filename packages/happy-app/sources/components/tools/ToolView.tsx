@@ -131,6 +131,11 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         hideDefaultError = knownTool.hideDefaultError;
     }
 
+    const executionSummary = getExecutionSummary(tool, status);
+    if (executionSummary) {
+        description = description ? `${description} • ${executionSummary}` : executionSummary;
+    }
+
     let statusIcon = null;
 
     let isToolUseError = false;
@@ -304,6 +309,33 @@ function ElapsedView(props: { from: number }) {
     const { from } = props;
     const elapsed = useElapsedTime(from);
     return <Text style={styles.elapsedText}>{elapsed.toFixed(1)}s</Text>;
+}
+
+function getExecutionSummary(tool: ToolCall, headerStatus: string | null) {
+    if (!tool.execution) {
+        return null;
+    }
+
+    const parts: string[] = [];
+    if (!headerStatus && tool.execution.status) {
+        parts.push(tool.execution.status);
+    }
+    if (tool.execution.exitCode !== null && tool.execution.exitCode !== undefined) {
+        parts.push(`exit ${tool.execution.exitCode}`);
+    }
+    if (tool.execution.durationMs !== null && tool.execution.durationMs !== undefined) {
+        parts.push(formatExecutionDuration(tool.execution.durationMs));
+    }
+
+    return parts.length > 0 ? parts.join(' • ') : null;
+}
+
+function formatExecutionDuration(durationMs: number) {
+    if (durationMs < 1000) {
+        return `${durationMs}ms`;
+    }
+
+    return `${(durationMs / 1000).toFixed(durationMs >= 10_000 ? 0 : 1)}s`;
 }
 
 const styles = StyleSheet.create((theme) => ({

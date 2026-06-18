@@ -117,12 +117,12 @@ describe('CodexPermissionHandler', () => {
             { command: 'rm -rf /tmp/example' },
         );
 
-        expect(result).toEqual({ decision: 'approved' });
+        expect(result).toEqual({ decision: 'approved_for_session' });
         expect(getState().completedRequests.call_exec_456).toMatchObject({
             tool: 'Bash',
             arguments: { command: 'rm -rf /tmp/example' },
             status: 'approved',
-            decision: 'approved',
+            decision: 'approved_for_session',
         });
     });
 });

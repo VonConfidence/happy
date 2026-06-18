@@ -24,6 +24,13 @@ const agentEventSchema = z.discriminatedUnion('type', [z.object({
     type: z.literal('message'),
     message: z.string(),
 }), z.object({
+    type: z.literal('turn-file-summary'),
+    files: z.array(z.object({
+        path: z.string(),
+        additions: z.number(),
+        deletions: z.number(),
+    })),
+}), z.object({
     type: z.literal('limit-reached'),
     endsAt: z.number(),
 }), z.object({
@@ -54,6 +61,11 @@ const sessionToolCallStartEventSchema = z.object({
 const sessionToolCallEndEventSchema = z.object({
     t: z.literal('tool-call-end'),
     call: z.string(),
+    output: z.string().nullable().optional(),
+    isError: z.boolean().optional(),
+    status: z.string().nullable().optional(),
+    exitCode: z.number().nullable().optional(),
+    durationMs: z.number().nullable().optional(),
 });
 
 const sessionFileEventSchema = z.object({
@@ -335,7 +347,10 @@ const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
             callId: z.string(),
             output: z.any(),
             id: z.string(),
-            isError: z.boolean().optional()
+            isError: z.boolean().optional(),
+            status: z.string().nullable().optional(),
+            exitCode: z.number().nullable().optional(),
+            durationMs: z.number().nullable().optional(),
         }),
         // Hyphenated tool-call-result (for backwards compatibility with CLI)
         z.object({
@@ -491,6 +506,9 @@ type NormalizedAgentContent =
         tool_use_id: string;
         content: any;
         is_error: boolean;
+        status?: string | null;
+        exitCode?: number | null;
+        durationMs?: number | null;
         uuid: string;
         parentUUID: string | null;
         permissions?: {
@@ -526,6 +544,7 @@ export type NormalizedMessage = ({
     localId: string | null,
     createdAt: number,
     isSidechain: boolean,
+    turnId?: string,
     meta?: MessageMeta,
     usage?: UsageData,
     /**
@@ -571,6 +590,7 @@ function normalizeSessionEnvelope(
             createdAt: messageCreatedAt,
             role: 'event',
             isSidechain: false,
+            turnId: envelope.turn,
             content: { type: 'ready' },
             meta
         } satisfies NormalizedMessage;
@@ -605,6 +625,7 @@ function normalizeSessionEnvelope(
                 createdAt: messageCreatedAt,
                 role: 'user',
                 isSidechain: false,
+                turnId: envelope.turn,
                 content: {
                     type: 'text',
                     text: envelope.ev.text
@@ -621,6 +642,7 @@ function normalizeSessionEnvelope(
             createdAt: messageCreatedAt,
             role: 'agent',
             isSidechain,
+            turnId: envelope.turn,
             content: [
                 envelope.ev.thinking ? {
                     type: 'thinking',
@@ -647,6 +669,7 @@ function normalizeSessionEnvelope(
             createdAt: messageCreatedAt,
             role: 'agent',
             isSidechain,
+            turnId: envelope.turn,
             content: [{
                 type: 'tool-call',
                 id: envelope.ev.call,
@@ -667,11 +690,15 @@ function normalizeSessionEnvelope(
             createdAt: messageCreatedAt,
             role: 'agent',
             isSidechain,
+            turnId: envelope.turn,
             content: [{
                 type: 'tool-result',
                 tool_use_id: envelope.ev.call,
-                content: null,
-                is_error: false,
+                content: envelope.ev.output ?? null,
+                is_error: envelope.ev.isError ?? false,
+                status: envelope.ev.status,
+                exitCode: envelope.ev.exitCode,
+                durationMs: envelope.ev.durationMs,
                 uuid: contentUUID,
                 parentUUID
             }],
@@ -702,6 +729,7 @@ function normalizeSessionEnvelope(
             createdAt: messageCreatedAt,
             role: 'agent',
             isSidechain,
+            turnId: envelope.turn,
             content: [
                 {
                     type: 'tool-call',
@@ -999,6 +1027,9 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         tool_use_id: raw.content.data.callId,
                         content: raw.content.data.output,
                         is_error: false,
+                        status: null,
+                        exitCode: null,
+                        durationMs: null,
                         uuid: raw.content.data.id,
                         parentUUID: null
                     }],
@@ -1074,6 +1105,9 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         tool_use_id: raw.content.data.callId,
                         content: raw.content.data.output,
                         is_error: raw.content.data.isError ?? false,
+                        status: raw.content.data.status,
+                        exitCode: raw.content.data.exitCode,
+                        durationMs: raw.content.data.durationMs,
                         uuid: raw.content.data.id,
                         parentUUID: null
                     }],
@@ -1093,6 +1127,9 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         tool_use_id: raw.content.data.callId,
                         content: raw.content.data.output,
                         is_error: false,
+                        status: null,
+                        exitCode: null,
+                        durationMs: null,
                         uuid: raw.content.data.id,
                         parentUUID: null
                     }],
@@ -1154,6 +1191,9 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         tool_use_id: raw.content.data.callId,
                         content: raw.content.data.data,
                         is_error: false,
+                        status: null,
+                        exitCode: null,
+                        durationMs: null,
                         uuid: id,
                         parentUUID: null
                     }],

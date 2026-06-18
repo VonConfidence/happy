@@ -1,5 +1,6 @@
 import { render } from "ink";
 import React from "react";
+import type { SessionEnvelope } from '@slopus/happy-wire';
 import { ApiClient } from '@/api/api';
 import { CodexAppServerClient } from './codexAppServerClient';
 import type { ReasoningEffort } from './codexAppServerTypes';
@@ -39,6 +40,9 @@ import {
 import { resumeExistingThread } from './resumeExistingThread';
 import { emitReadyIfIdle } from './emitReadyIfIdle';
 import { enqueueCodexUserText, isCodexClearText } from './codexClearCommand';
+import { readThreadContextFromSessionFiles } from './readThreadContextFromSessionFiles';
+import { readMainThreadToolCallsFromSessionFiles } from './readMainThreadToolCallsFromSessionFiles';
+import { readSubagentThreadsFromSessionFiles } from './readSubagentThreadsFromSessionFiles';
 import {
     buildCodexTurnPrompt,
     hashCodexEnhancedMode,
@@ -63,6 +67,27 @@ function describeCodexFailure(msg: any): string | null {
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const DEFAULT_CODEX_EFFORT: ReasoningEffort = 'medium';
 const DEFAULT_CODEX_PERMISSION_MODE: PermissionMode = 'full';
+
+function dedupeHistoricalToolEnvelopes(
+    threadEnvelopes: SessionEnvelope[],
+    fallbackToolEnvelopes: SessionEnvelope[],
+): SessionEnvelope[] {
+    const seenLifecycleKeys = new Set<string>();
+
+    for (const envelope of threadEnvelopes) {
+        if (envelope.ev.t !== 'tool-call-start' && envelope.ev.t !== 'tool-call-end') {
+            continue;
+        }
+        seenLifecycleKeys.add(`${envelope.ev.t}:${envelope.ev.call}`);
+    }
+
+    return fallbackToolEnvelopes.filter((envelope) => {
+        if (envelope.ev.t !== 'tool-call-start' && envelope.ev.t !== 'tool-call-end') {
+            return true;
+        }
+        return !seenLifecycleKeys.has(`${envelope.ev.t}:${envelope.ev.call}`);
+    });
+}
 
 /**
  * Main entry point for the codex command with ink UI
@@ -737,14 +762,33 @@ export async function runCodex(opts: {
                     threadId: forkCodexThreadId,
                     includeTurns: true,
                 });
-                const envelopes = mapCodexThreadToSessionEnvelopes(thread);
+                const mainThreadToolEnvelopes = await readMainThreadToolCallsFromSessionFiles(forkCodexThreadId);
+                const subagentThreads = await readSubagentThreadsFromSessionFiles(forkCodexThreadId);
+                const threadEnvelopes = mapCodexThreadToSessionEnvelopes(thread, {
+                    historicalSubagents: subagentThreads.flatMap((subagentThread) => {
+                        return subagentThread.prompt
+                            ? [{
+                                prompt: subagentThread.prompt,
+                                sessionSubagent: subagentThread.sessionSubagent,
+                        }]
+                            : [];
+                    }),
+                });
+                const dedupedMainThreadToolEnvelopes = dedupeHistoricalToolEnvelopes(threadEnvelopes, mainThreadToolEnvelopes);
+                const envelopes = [
+                    ...threadEnvelopes,
+                    ...dedupedMainThreadToolEnvelopes,
+                    ...subagentThreads.flatMap((subagentThread) => subagentThread.envelopes),
+                ].sort((a, b) => a.time - b.time);
                 const threadSummaryText = getCodexThreadSummaryText(thread);
+                const threadContext = await readThreadContextFromSessionFiles(forkCodexThreadId);
                 for (const envelope of envelopes) {
                     session.sendSessionProtocolMessage(envelope);
                 }
                 session.updateMetadata((currentMetadata) => ({
                     ...currentMetadata,
                     codexThreadId: forkCodexThreadId,
+                    ...(threadContext ? { codexTurnContext: threadContext } : {}),
                     ...(threadSummaryText ? {
                         name: threadSummaryText,
                         summary: {
@@ -753,7 +797,7 @@ export async function runCodex(opts: {
                         },
                     } : {}),
                 }));
-                logger.debug(`[CODEX FORK BACKFILL] Replayed ${envelopes.length} historical envelopes from thread ${forkCodexThreadId}`);
+                logger.debug(`[CODEX FORK BACKFILL] Replayed ${envelopes.length} historical envelopes from thread ${forkCodexThreadId} including ${dedupedMainThreadToolEnvelopes.length} deduped main-thread tool envelope(s) and ${subagentThreads.length} subagent thread(s)`);
             } catch (error) {
                 logger.debug(`[CODEX FORK BACKFILL] Failed to read thread ${forkCodexThreadId}:`, error);
             }

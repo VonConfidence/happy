@@ -1,6 +1,5 @@
 import * as React from "react";
 import { View, Text, Pressable, Platform } from "react-native";
-import { StyleSheet } from 'react-native-unistyles';
 import { MarkdownView } from "./markdown/MarkdownView";
 import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/typesMessage";
@@ -11,6 +10,10 @@ import { sync } from '@/sync/sync';
 import { Option } from './markdown/MarkdownView';
 import { layout } from "./layout";
 import { parseLocalCommandMessage, isUserSlashCommandEcho } from './parseLocalCommandMessage';
+import { Ionicons, Octicons } from '@expo/vector-icons';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useRouter } from 'expo-router';
+import { formatTurnSummaryPath, getCollapsibleUserMessagePreview, normalizeVisibleUserMessageText } from './messageViewHelpers';
 
 
 export const MessageView = React.memo((props: {
@@ -73,7 +76,7 @@ function RenderBlock(props: {
       />;
 
     case 'agent-event':
-      return <AgentEventBlock event={props.message.event} metadata={props.metadata} />;
+      return <AgentEventBlock event={props.message.event} metadata={props.metadata} sessionId={props.sessionId} />;
 
 
     default:
@@ -92,6 +95,7 @@ function UserTextBlock(props: {
   const handleOptionPress = React.useCallback((option: Option) => {
     sync.sendMessage(props.sessionId, option.title, { source: 'option' });
   }, [props.sessionId]);
+  const [expanded, setExpanded] = React.useState(false);
 
   const rewindPointId = props.message.claudeUuid ?? props.message.codexItemId;
   const canFork = Boolean(props.onForkFromUserMessage)
@@ -133,6 +137,10 @@ function UserTextBlock(props: {
     );
   }
 
+  const visibleText = normalizeVisibleUserMessageText(parsed.text);
+  const preview = getCollapsibleUserMessagePreview(visibleText);
+  const displayedText = expanded || !preview.collapsed ? visibleText : preview.text;
+
   return (
     <View style={styles.userMessageContainer}>
       <Pressable
@@ -140,7 +148,22 @@ function UserTextBlock(props: {
         delayLongPress={400}
         style={styles.userMessageBubble}
       >
-        <MarkdownView markdown={parsed.text} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
+        <MarkdownView markdown={displayedText} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
+        {preview.collapsed ? (
+          <Pressable
+            onPress={() => setExpanded((value) => !value)}
+            style={({ pressed }) => [styles.userMessageExpandButton, pressed ? styles.pressed : null]}
+          >
+            <Text style={styles.userMessageExpandText}>
+              {expanded ? '收起' : '显示更多'}
+            </Text>
+            <Ionicons
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={14}
+              color={styles.userMessageExpandText.color}
+            />
+          </Pressable>
+        ) : null}
       </Pressable>
     </View>
   );
@@ -169,7 +192,11 @@ function AgentTextBlock(props: {
 function AgentEventBlock(props: {
   event: AgentEvent;
   metadata: Metadata | null;
+  sessionId: string;
 }) {
+  if (props.event.type === 'turn-file-summary') {
+    return <TurnFileSummaryBlock event={props.event} metadata={props.metadata} sessionId={props.sessionId} />;
+  }
   if (props.event.type === 'switch') {
     return (
       <View style={styles.agentEventContainer}>
@@ -205,6 +232,96 @@ function AgentEventBlock(props: {
   return (
     <View style={styles.agentEventContainer}>
       <Text style={styles.agentEventText}>{t('message.unknownEvent')}</Text>
+    </View>
+  );
+}
+
+function TurnFileSummaryBlock(props: {
+  event: Extract<AgentEvent, { type: 'turn-file-summary' }>;
+  sessionId: string;
+  metadata: Metadata | null;
+}) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const [expanded, setExpanded] = React.useState(false);
+
+  const files = props.event.files;
+  const visibleFiles = expanded ? files : files.slice(0, 3);
+  const hiddenCount = files.length - visibleFiles.length;
+
+  const openAllChanges = React.useCallback(() => {
+    router.push(`/session/${props.sessionId}/files`);
+  }, [props.sessionId, router]);
+
+  const openFileDiff = React.useCallback((path: string) => {
+    router.push(`/session/${props.sessionId}/file?path=${btoa(path)}`);
+  }, [props.sessionId, router]);
+
+  return (
+    <View style={styles.summaryCardOuter}>
+      <View style={[styles.summaryCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider }]}>
+        <View style={[styles.summaryHeader, { backgroundColor: theme.colors.surfaceHigh, borderBottomColor: theme.colors.divider }]}>
+          <View style={styles.summaryHeaderMain}>
+            <View style={[styles.summaryIconWrap, { backgroundColor: theme.colors.surface }]}>
+              <Octicons name="file-diff" size={16} color={theme.colors.text} />
+            </View>
+            <View style={styles.summaryHeaderText}>
+              <Text style={[styles.summaryTitle, { color: theme.colors.text }]}>
+                {`已编辑 ${files.length} 个文件`}
+              </Text>
+              <Pressable onPress={openAllChanges} style={({ pressed }) => pressed ? styles.pressed : null}>
+                <Text style={[styles.summaryLink, { color: theme.colors.textSecondary }]}>查看更改 ↗</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.summaryList}>
+          {visibleFiles.map((file) => (
+            <Pressable
+              key={file.path}
+              onPress={() => openFileDiff(file.path)}
+              style={({ pressed }) => [
+                styles.summaryRow,
+                { borderBottomColor: theme.colors.divider },
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <Text numberOfLines={1} style={[styles.summaryPath, { color: theme.colors.text }]}>
+                {formatTurnSummaryPath(file.path, props.metadata)}
+              </Text>
+              {(file.additions > 0 || file.deletions > 0) ? (
+                <View style={styles.summaryStats}>
+                  <Text style={styles.summaryAdded}>{`+${file.additions}`}</Text>
+                  <Text style={styles.summaryRemoved}>{`-${file.deletions}`}</Text>
+                </View>
+              ) : (
+                <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />
+              )}
+            </Pressable>
+          ))}
+        </View>
+
+        {hiddenCount > 0 ? (
+          <Pressable
+            onPress={() => setExpanded((value) => !value)}
+            style={({ pressed }) => [
+              styles.summaryFooter,
+              { borderTopColor: theme.colors.divider },
+              pressed ? styles.pressed : null,
+            ]}
+          >
+            <Text style={[styles.summaryFooterText, { color: theme.colors.text }]}>
+              {expanded ? '收起' : `再显示 ${hiddenCount} 个文件`}
+            </Text>
+            <Ionicons
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={14}
+              color={theme.colors.textSecondary}
+            />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -259,6 +376,18 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: 12,
     maxWidth: '100%',
   },
+  userMessageExpandButton: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+  },
+  userMessageExpandText: {
+    color: theme.colors.input.text,
+    fontSize: 13,
+    opacity: 0.8,
+  },
   commandChip: {
     backgroundColor: theme.colors.userMessageBackground,
     paddingHorizontal: 10,
@@ -292,6 +421,87 @@ const styles = StyleSheet.create((theme) => ({
     marginHorizontal: 8,
     maxWidth: '100%',
     overflow: 'hidden',
+  },
+  summaryCardOuter: {
+    marginHorizontal: 8,
+    marginBottom: 12,
+  },
+  summaryCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  summaryHeader: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  summaryHeaderMain: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  summaryIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  summaryHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  summaryTitle: {
+    fontSize: 16,
+  },
+  summaryLink: {
+    fontSize: 13,
+  },
+  summaryList: {
+    width: '100%',
+  },
+  summaryRow: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderBottomWidth: 1,
+  },
+  summaryPath: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: 'monospace',
+  },
+  summaryStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  summaryAdded: {
+    fontSize: 13,
+    fontFamily: 'monospace',
+    color: '#34C759',
+  },
+  summaryRemoved: {
+    fontSize: 13,
+    fontFamily: 'monospace',
+    color: '#FF3B30',
+  },
+  summaryFooter: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderTopWidth: 1,
+  },
+  summaryFooterText: {
+    fontSize: 14,
+  },
+  pressed: {
+    opacity: 0.7,
   },
   debugText: {
     color: theme.colors.agentEventText,

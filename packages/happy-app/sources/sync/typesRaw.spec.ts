@@ -1690,7 +1690,12 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                         turn: 'turn-1',
                         ev: {
                             t: 'tool-call-end',
-                            call: 'call-1'
+                            call: 'call-1',
+                            output: 'ok',
+                            isError: false,
+                            status: 'completed',
+                            exitCode: 0,
+                            durationMs: 25
                         }
                     }
                 }
@@ -1700,7 +1705,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 expect(end.content[0]).toMatchObject({
                     type: 'tool-result',
                     tool_use_id: 'call-1',
-                    content: null,
+                    content: 'ok',
                     is_error: false
                 });
             }
@@ -1738,6 +1743,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             expect(turnEnd).toMatchObject({
                 id: 'env-6',
                 role: 'event',
+                turnId: 'turn-5',
                 content: { type: 'ready' }
             });
         });

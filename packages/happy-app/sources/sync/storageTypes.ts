@@ -35,6 +35,15 @@ export const MetadataSchema = z.object({
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexThreadId: z.string().optional(), // Codex app-server thread ID
+    codexTurnContext: z.object({
+        cwd: z.string().optional(),
+        currentDate: z.string().optional(),
+        timezone: z.string().optional(),
+        approvalPolicy: z.string().optional(),
+        sandboxPolicy: z.unknown().optional(),
+        model: z.string().optional(),
+        reasoningEffort: z.string().optional(),
+    }).optional(),
     importedFromExternalCodex: z.boolean().optional(),
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),
