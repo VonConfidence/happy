@@ -77,47 +77,52 @@ export abstract class BasePermissionHandler {
             'permission',
             async (response) => {
                 const pending = this.pendingRequests.get(response.id);
+                const result: PermissionResult = response.approved
+                    ? { decision: response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved' }
+                    : { decision: response.decision === 'denied' ? 'denied' : 'abort' };
+
                 if (!pending) {
-                    logger.debug(`${this.getLogPrefix()} Permission request not found or already resolved`);
+                    logger.debug(`${this.getLogPrefix()} Permission request not found or already resolved; reconciling agent state only`);
+                    this.reconcilePermissionState(response.id, response.approved, result.decision);
                     return;
                 }
 
                 // Remove from pending
                 this.pendingRequests.delete(response.id);
 
-                // Resolve the permission request
-                const result: PermissionResult = response.approved
-                    ? { decision: response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved' }
-                    : { decision: response.decision === 'denied' ? 'denied' : 'abort' };
-
                 pending.resolve(result);
-
-                // Move request to completed in agent state
-                this.session.updateAgentState((currentState) => {
-                    const request = currentState.requests?.[response.id];
-                    if (!request) return currentState;
-
-                    const { [response.id]: _, ...remainingRequests } = currentState.requests || {};
-
-                    let res = {
-                        ...currentState,
-                        requests: remainingRequests,
-                        completedRequests: {
-                            ...currentState.completedRequests,
-                            [response.id]: {
-                                ...request,
-                                completedAt: Date.now(),
-                                status: response.approved ? 'approved' : 'denied',
-                                decision: result.decision
-                            }
-                        }
-                    } satisfies AgentState;
-                    return res;
-                });
+                this.reconcilePermissionState(response.id, response.approved, result.decision);
 
                 logger.debug(`${this.getLogPrefix()} Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`);
             }
         );
+    }
+
+    private reconcilePermissionState(
+        requestId: string,
+        approved: boolean,
+        decision: PermissionResult['decision'],
+    ): void {
+        this.session.updateAgentState((currentState) => {
+            const request = currentState.requests?.[requestId];
+            if (!request) return currentState;
+
+            const { [requestId]: _, ...remainingRequests } = currentState.requests || {};
+
+            return {
+                ...currentState,
+                requests: remainingRequests,
+                completedRequests: {
+                    ...currentState.completedRequests,
+                    [requestId]: {
+                        ...request,
+                        completedAt: Date.now(),
+                        status: approved ? 'approved' : 'denied',
+                        decision,
+                    }
+                }
+            } satisfies AgentState;
+        });
     }
 
     /**

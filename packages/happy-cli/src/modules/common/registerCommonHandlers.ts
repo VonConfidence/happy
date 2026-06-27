@@ -121,6 +121,7 @@ export interface SpawnSessionOptions {
     sessionId?: string;
     approvedNewDirectoryCreation?: boolean;
     agent?: 'claude' | 'codex' | 'gemini' | 'openclaw';
+    permissionMode?: import('@/api/types').PermissionMode;
     environmentVariables?: Record<string, string>;
     token?: string;
     /**

@@ -1051,6 +1051,7 @@ function NewSessionScreen() {
                 directory: spawnDirectory,
                 approvedNewDirectoryCreation,
                 agent: selectedAgent,
+                permissionMode: currentPermission.key,
             });
 
             switch (result.type) {

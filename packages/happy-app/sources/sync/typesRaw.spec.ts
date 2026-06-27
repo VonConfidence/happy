@@ -1145,6 +1145,31 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             }
         });
 
+        it('preserves codex phase metadata on codex text messages', () => {
+            const normalized = normalizeRawMessage('codex-message-1', null, 1, {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'message',
+                        message: 'final answer',
+                        phase: 'final_answer',
+                    }
+                }
+            });
+
+            expect(normalized).toMatchObject({
+                role: 'agent',
+                content: [{
+                    type: 'text',
+                    text: 'final answer',
+                }],
+                meta: {
+                    codexPhase: 'final_answer',
+                },
+            });
+        });
+
         it('handles hypothetical hyphenated types in output path (defensive)', () => {
             // This tests the defensive nature of the transform
             // If CLI ever sends hyphenated in output path, it should work

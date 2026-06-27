@@ -28,6 +28,7 @@ import { detectCLIAvailability } from '@/utils/detectCLI';
 import { buildResumeLaunch } from '@/resume/handleResumeCommand';
 import { detectResumeSupport } from '@/resume/localHappyAgentAuth';
 import { encodeBase64, decodeBase64, decrypt } from '@/api/encryption';
+import { buildSpawnLaunchSpec } from './spawnSessionArgs';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -404,22 +405,20 @@ export async function startDaemon(): Promise<void> {
 
           // Construct command for the CLI
           const cliPath = join(projectPath(), 'dist', 'index.mjs');
-          // Determine agent command - support claude, codex, and gemini
-          const agent = options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : (options.agent === 'openclaw' ? 'openclaw' : 'claude'));
-          const resumeId = agent === 'claude'
-            ? options.resumeClaudeSessionId
-            : (agent === 'codex' ? options.resumeCodexThreadId : undefined);
-          const resumeFragment = resumeId
-            ? ` --resume ${shellescape(resumeId)}`
-            : '';
-          const fullCommand = `node --no-warnings --no-deprecation ${cliPath} ${agent} --happy-starting-mode remote --started-by daemon${resumeFragment}`;
+          const launchSpec = buildSpawnLaunchSpec({
+            agent: options.agent,
+            permissionMode: options.permissionMode,
+            resumeClaudeSessionId: options.resumeClaudeSessionId,
+            resumeCodexThreadId: options.resumeCodexThreadId,
+          });
+          const fullCommand = `node --no-warnings --no-deprecation ${cliPath} ${launchSpec.args.map(shellescape).join(' ')}`;
 
           // Spawn in tmux with environment variables
           // IMPORTANT: Pass complete environment (process.env + extraEnv) because:
           // 1. tmux sessions need daemon's expanded auth variables (e.g., ANTHROPIC_AUTH_TOKEN)
           // 2. Regular spawn uses env: { ...process.env, ...extraEnv }
           // 3. tmux needs explicit environment via -e flags to ensure all variables are available
-          const windowName = `happy-${Date.now()}-${agent}`;
+          const windowName = `happy-${Date.now()}-${launchSpec.agentCommand}`;
           const tmuxEnv: Record<string, string> = {};
 
           // Add all daemon environment variables (filtering out undefined)
@@ -495,41 +494,12 @@ export async function startDaemon(): Promise<void> {
           logger.debug(`[DAEMON RUN] Using regular process spawning`);
 
           // Construct arguments for the CLI - support claude, codex, and gemini
-          let agentCommand: string;
-          switch (options.agent) {
-            case 'claude':
-            case undefined:
-              agentCommand = 'claude';
-              break;
-            case 'codex':
-              agentCommand = 'codex';
-              break;
-            case 'gemini':
-              agentCommand = 'gemini';
-              break;
-            case 'openclaw':
-              agentCommand = 'openclaw';
-              break;
-            default:
-              return {
-                type: 'error',
-                errorMessage: `Unsupported agent type: '${options.agent}'. Please update your CLI to the latest version.`
-              };
-          }
-          const args = [
-            agentCommand,
-            '--happy-starting-mode', 'remote',
-            '--started-by', 'daemon'
-          ];
-
-          // Resume ids attach the new Happy session to a pre-existing provider
-          // conversation created by the fork / duplicate RPC.
-          if (options.resumeClaudeSessionId && agentCommand === 'claude') {
-            args.push('--resume', options.resumeClaudeSessionId);
-          }
-          if (options.resumeCodexThreadId && agentCommand === 'codex') {
-            args.push('--resume', options.resumeCodexThreadId);
-          }
+          const { args } = buildSpawnLaunchSpec({
+            agent: options.agent,
+            permissionMode: options.permissionMode,
+            resumeClaudeSessionId: options.resumeClaudeSessionId,
+            resumeCodexThreadId: options.resumeCodexThreadId,
+          });
 
           // TODO: In future, sessionId could be used with --resume to continue existing sessions
           // For now, we ignore it - each spawn creates a new session

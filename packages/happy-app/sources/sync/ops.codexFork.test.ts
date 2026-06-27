@@ -129,4 +129,27 @@ describe('codex fork ops', () => {
             { directory: '/tmp/project', importedThreadIds: ['thread-2'] },
         );
     });
+
+    it('forwards permission mode when spawning a new session', async () => {
+        machineRPC.mockResolvedValue({ type: 'success', sessionId: 'happy-1' });
+
+        const { machineSpawnNewSession } = await import('./ops');
+        await machineSpawnNewSession({
+            machineId: 'machine-1',
+            directory: '/tmp/project',
+            agent: 'codex',
+            permissionMode: 'full',
+        });
+
+        expect(machineRPC).toHaveBeenCalledWith(
+            'machine-1',
+            'spawn-happy-session',
+            expect.objectContaining({
+                type: 'spawn-in-directory',
+                directory: '/tmp/project',
+                agent: 'codex',
+                permissionMode: 'full',
+            }),
+        );
+    });
 });

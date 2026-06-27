@@ -84,6 +84,7 @@ describe('ApiMachineClient Codex fork RPCs', () => {
         const result = await handlersFrom(client).get('machine-1:spawn-happy-session')?.({
             directory: '/tmp/project',
             agent: 'codex',
+            permissionMode: 'full',
             resumeCodexThreadId: 'thread-forked',
             importedFromExternalCodex: true,
             parentSessionId: 'happy-source',
@@ -93,6 +94,7 @@ describe('ApiMachineClient Codex fork RPCs', () => {
         expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/tmp/project',
             agent: 'codex',
+            permissionMode: 'full',
             resumeCodexThreadId: 'thread-forked',
             importedFromExternalCodex: true,
             parentSessionId: 'happy-source',

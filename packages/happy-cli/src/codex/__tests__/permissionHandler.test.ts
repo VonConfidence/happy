@@ -9,11 +9,12 @@ vi.mock('@/ui/logger', () => ({
 
 function createSessionMock() {
     let state: Record<string, any> = {};
+    const registerHandler = vi.fn();
 
     return {
         session: {
             rpcHandlerManager: {
-                registerHandler: vi.fn(),
+                registerHandler,
             },
             updateAgentState: vi.fn((updater: (currentState: Record<string, any>) => Record<string, any>) => {
                 state = updater(state);
@@ -21,6 +22,7 @@ function createSessionMock() {
             }),
         },
         getState: () => state,
+        getRegisteredHandler: () => registerHandler.mock.calls.find(([method]) => method === 'permission')?.[1],
     };
 }
 
@@ -121,6 +123,40 @@ describe('CodexPermissionHandler', () => {
         expect(getState().completedRequests.call_exec_456).toMatchObject({
             tool: 'Bash',
             arguments: { command: 'rm -rf /tmp/example' },
+            status: 'approved',
+            decision: 'approved_for_session',
+        });
+    });
+
+    it('reconciles stale agent-state permission when app approves after local pending map is gone', async () => {
+        const { session, getState, getRegisteredHandler } = createSessionMock();
+        new CodexPermissionHandler(session as any, 'default');
+
+        session.updateAgentState((currentState: Record<string, any>) => ({
+            ...currentState,
+            requests: {
+                ...currentState.requests,
+                call_exec_789: {
+                    tool: 'CodexPatch',
+                    arguments: { changes: { 'a.ts': {} } },
+                    createdAt: 123,
+                },
+            },
+        }));
+
+        const permissionRpcHandler = getRegisteredHandler();
+        expect(permissionRpcHandler).toBeTypeOf('function');
+
+        await permissionRpcHandler({
+            id: 'call_exec_789',
+            approved: true,
+            decision: 'approved_for_session',
+        });
+
+        expect(getState().requests?.call_exec_789).toBeUndefined();
+        expect(getState().completedRequests.call_exec_789).toMatchObject({
+            tool: 'CodexPatch',
+            arguments: { changes: { 'a.ts': {} } },
             status: 'approved',
             decision: 'approved_for_session',
         });

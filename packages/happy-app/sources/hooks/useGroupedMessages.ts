@@ -88,6 +88,7 @@ export function groupMessagesForDisplay(
         const msg = messages[i];
 
         if (isInvisibleMessage(msg)) continue;
+        if (shouldHideDuplicatedCodexCommentary(messages, i)) continue;
 
         if (hiddenWorkIndexes.has(i)) {
             const workGroup = workGroupByOldestIndex.get(i);
@@ -361,6 +362,24 @@ function hasPendingPermission(messages: Message[]): boolean {
         msg.kind === 'tool-call'
         && msg.tool.permission?.status === 'pending'
     ));
+}
+
+function shouldHideDuplicatedCodexCommentary(messages: Message[], index: number): boolean {
+    const current = messages[index];
+    if (current.kind !== 'agent-text' || current.meta?.codexPhase !== 'commentary') {
+        return false;
+    }
+
+    const adjacent = messages[index - 1];
+    if (!adjacent || adjacent.kind !== 'agent-text' || adjacent.meta?.codexPhase !== 'final_answer') {
+        return false;
+    }
+
+    return normalizeCodexComparableText(current.text) === normalizeCodexComparableText(adjacent.text);
+}
+
+function normalizeCodexComparableText(text: string): string {
+    return text.trimEnd();
 }
 
 // Tool name → category mapping for summary generation

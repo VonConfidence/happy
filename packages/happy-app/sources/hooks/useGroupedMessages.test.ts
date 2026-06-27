@@ -261,6 +261,82 @@ describe('useGroupedMessages', () => {
         expect(items[0]).toMatchObject({ type: 'message', id: 'tool-only' });
     });
 
+    it('hides duplicated codex commentary when the adjacent final answer has the same text', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-text',
+                id: 'final-answer',
+                localId: null,
+                createdAt: 3,
+                text: '证据链已经闭合：',
+                meta: {
+                    sentFrom: 'cli',
+                    codexPhase: 'final_answer',
+                },
+            },
+            {
+                kind: 'agent-text',
+                id: 'commentary',
+                localId: null,
+                createdAt: 2,
+                text: '证据链已经闭合：',
+                meta: {
+                    sentFrom: 'cli',
+                    codexPhase: 'commentary',
+                },
+            },
+            {
+                kind: 'user-text',
+                id: 'user',
+                localId: null,
+                createdAt: 1,
+                text: '排查一下',
+            },
+        ];
+
+        const items = groupMessagesForDisplay(messages, true, { collapseCurrentTurn: false });
+
+        expect(items.map((item) => item.id)).toEqual(['final-answer', 'user']);
+    });
+
+    it('keeps codex commentary when its text differs from the final answer', () => {
+        const messages: Message[] = [
+            {
+                kind: 'agent-text',
+                id: 'final-answer',
+                localId: null,
+                createdAt: 3,
+                text: '最终结论',
+                meta: {
+                    sentFrom: 'cli',
+                    codexPhase: 'final_answer',
+                },
+            },
+            {
+                kind: 'agent-text',
+                id: 'commentary',
+                localId: null,
+                createdAt: 2,
+                text: '我先检查一下日志',
+                meta: {
+                    sentFrom: 'cli',
+                    codexPhase: 'commentary',
+                },
+            },
+            {
+                kind: 'user-text',
+                id: 'user',
+                localId: null,
+                createdAt: 1,
+                text: '排查一下',
+            },
+        ];
+
+        const items = groupMessagesForDisplay(messages, true, { collapseCurrentTurn: false });
+
+        expect(items.map((item) => item.id)).toEqual(['final-answer', 'commentary', 'user']);
+    });
+
     it('can collapse single standalone tool calls for nested work details', () => {
         const messages: Message[] = [
             toolMessage('tool-only', 2),

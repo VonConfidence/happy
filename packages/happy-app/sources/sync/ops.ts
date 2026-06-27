@@ -140,6 +140,7 @@ export interface SpawnSessionOptions {
     approvedNewDirectoryCreation?: boolean;
     token?: string;
     agent?: 'codex' | 'claude' | 'gemini' | 'openclaw';
+    permissionMode?: string;
     /**
      * If set, the daemon spawns the agent with `--resume <id>` so the new
      * Happy session attaches to a pre-existing on-disk Claude conversation
@@ -233,6 +234,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         approvedNewDirectoryCreation = false,
         token,
         agent,
+        permissionMode,
         resumeClaudeSessionId,
         resumeCodexThreadId,
         importedFromExternalCodex,
@@ -247,6 +249,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             approvedNewDirectoryCreation?: boolean,
             token?: string,
             agent?: 'codex' | 'claude' | 'gemini' | 'openclaw',
+            permissionMode?: string,
             resumeClaudeSessionId?: string,
             resumeCodexThreadId?: string,
             importedFromExternalCodex?: boolean,
@@ -255,7 +258,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         }>(
             machineId,
             'spawn-happy-session',
-            { type: 'spawn-in-directory', directory, approvedNewDirectoryCreation, token, agent, resumeClaudeSessionId, resumeCodexThreadId, importedFromExternalCodex, parentSessionId, forkedFromMessageId }
+            { type: 'spawn-in-directory', directory, approvedNewDirectoryCreation, token, agent, permissionMode, resumeClaudeSessionId, resumeCodexThreadId, importedFromExternalCodex, parentSessionId, forkedFromMessageId }
         );
         return result;
     } catch (error) {

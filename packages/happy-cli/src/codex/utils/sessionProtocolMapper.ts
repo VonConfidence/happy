@@ -803,7 +803,11 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
 
         const envelopes: SessionEnvelope[] = [];
         maybeEmitSubagentStart(subagent, opts, startedSubagents, activeSubagents, envelopes);
-        envelopes.push(createEnvelope('agent', { t: 'text', text: message.message }, opts));
+        envelopes.push(createEnvelope('agent', {
+            t: 'text',
+            text: message.message,
+            ...(typeof message.phase === 'string' && message.phase.length > 0 ? { phase: message.phase } : {}),
+        }, opts));
         return {
             currentTurnId: state.currentTurnId,
             startedSubagents,

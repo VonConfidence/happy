@@ -42,6 +42,7 @@ const sessionTextEventSchema = z.object({
     t: z.literal('text'),
     text: z.string(),
     thinking: z.boolean().optional(),
+    phase: z.string().optional(),
 });
 
 const sessionServiceMessageEventSchema = z.object({
@@ -306,8 +307,8 @@ const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
 }), z.object({
     type: z.literal('codex'),
     data: z.discriminatedUnion('type', [
-        z.object({ type: z.literal('reasoning'), message: z.string() }),
-        z.object({ type: z.literal('message'), message: z.string() }),
+        z.object({ type: z.literal('reasoning'), message: z.string(), phase: z.string().optional() }),
+        z.object({ type: z.literal('message'), message: z.string(), phase: z.string().optional() }),
         z.object({
             type: z.literal('tool-call'),
             callId: z.string(),
@@ -618,6 +619,9 @@ function normalizeSessionEnvelope(
     }
 
     if (envelope.ev.t === 'text') {
+        const eventMeta = envelope.ev.phase
+            ? { ...(meta ?? {}), codexPhase: envelope.ev.phase }
+            : meta;
         if (envelope.role === 'user') {
             return {
                 id: messageId,
@@ -630,7 +634,7 @@ function normalizeSessionEnvelope(
                     type: 'text',
                     text: envelope.ev.text
                 },
-                meta,
+                meta: eventMeta,
                 claudeUuid: envelope.claudeUuid,
                 codexItemId: envelope.codexItemId,
             } satisfies NormalizedMessage;
@@ -656,7 +660,7 @@ function normalizeSessionEnvelope(
                     parentUUID
                 }
             ],
-            meta,
+            meta: eventMeta,
             claudeUuid: envelope.claudeUuid,
             codexItemId: envelope.codexItemId,
         } satisfies NormalizedMessage;
@@ -961,6 +965,9 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
         }
         if (raw.content.type === 'codex') {
             if (raw.content.data.type === 'message') {
+                const meta = raw.content.data.phase
+                    ? { ...(raw.meta ?? {}), codexPhase: raw.content.data.phase }
+                    : raw.meta;
                 // Cast codex messages to agent text messages
                 return {
                     id,
@@ -974,10 +981,13 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         uuid: id,
                         parentUUID: null
                     }],
-                    meta: raw.meta
+                    meta
                 };
             }
             if (raw.content.data.type === 'reasoning') {
+                const meta = raw.content.data.phase
+                    ? { ...(raw.meta ?? {}), codexPhase: raw.content.data.phase }
+                    : raw.meta;
                 // Cast codex messages to agent text messages
                 return {
                     id,
@@ -991,7 +1001,7 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         uuid: id,
                         parentUUID: null
                     }],
-                    meta: raw.meta
+                    meta
                 } satisfies NormalizedMessage;
             }
             if (raw.content.data.type === 'tool-call') {
